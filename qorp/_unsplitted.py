@@ -2,23 +2,25 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from itertools import count
 from secrets import token_bytes
-from typing import Callable, NamedTuple, NewType
+from typing import Callable, NamedTuple, TypeAlias
 
 from .addresses import Address, ExternalAddress, FullAddress, address_from_full
 from .crypto import ChaCha20Poly1305, Ed25519PrivateKey, X25519PublicKey, X25519PrivateKey
 from .crypto import CHACHA_NONCE_LENGTH
+from .packets import Data, RouteRequest, RouteResponse, RouteError, SignedRouteRequest, SignedRouteResponse
+from .packets import QORPPacket, RequestInfoTriple
 from .utils.futures import Future, ConstFuture, set_ttl
 from .utils.timer import Timer
+from ._types import RouteID
 
 
 EMPTY_SET: set[Future[ReceivedResponse]] = set()
 
 log = logging.getLogger(__name__)
 
-RouteID = NewType("RouteID", int)
+Packet: TypeAlias = QORPPacket
 
 
 class Networking(ABC):
@@ -73,84 +75,12 @@ class FrontendTX(ABC):
         pass
 
 
-@dataclass
-class Data:
-    destination: Address
-    route_id: RouteID
-    chacha_nonce: bytes
-    payload_length: int
-    payload: bytes
-
-
-@dataclass
-class RouteRequest:
-    destination: Address
-    source: FullAddress
-    source_route_id: RouteID
-    source_eph: X25519PublicKey
-    max_hop_count: int
-
-    @property
-    def info_triple(self) -> RequestInfoTriple:
-        source = address_from_full(self.source)
-        return RequestInfoTriple(source, self.destination, self.source_route_id)
-
-    def sign(self, signing_key: Ed25519PrivateKey) -> SignedRouteRequest:
-        pass
-
-
-@dataclass
-class SignedRouteRequest:
-    payload: RouteRequest
-    sign: bytes
-    hop_count: int
-
-
-@dataclass
-class RouteResponse:
-    destination: Address
-    source: FullAddress
-    source_route_id: RouteID
-    destination_route_id: RouteID
-    destination_eph: X25519PublicKey
-    max_hop_count: int
-
-    @property
-    def request_info_triple(self) -> RequestInfoTriple:
-        source = address_from_full(self.source)
-        return RequestInfoTriple(self.destination, source, self.source_route_id)
-
-    def sign(self, signing_key: Ed25519PrivateKey) -> SignedRouteResponse:
-        pass
-
-
-@dataclass
-class SignedRouteResponse:
-    payload: RouteResponse
-    sign: bytes
-    hop_count: int
-
-
-@dataclass
-class RouteError:
-    route_destination: Address
-    route_id: RouteID
-
-
-Packet = Data | SignedRouteRequest | SignedRouteResponse | RouteError
-
 ReceivedResponse = tuple[ExternalAddress, SignedRouteResponse]
 
 
 class RouteInfo(NamedTuple):
     prev_hop: ExternalAddress
     next_hop: ExternalAddress
-
-
-class RequestInfoTriple(NamedTuple):
-    source: Address
-    destination: Address
-    source_route_id: RouteID
 
 
 class RequestInfo(NamedTuple):
@@ -388,7 +318,7 @@ class Terminal:
                 # TODO: parse payload and process it somehow
                 source_short = address_from_full(session.destination)
                 return self._frontend_rx.send(source=source_short, payload=payload)
-            case RouteRequest(_, source, request_id, source_eph):
+            case SignedRouteRequest(RouteRequest(_, source, request_id, source_eph)):
                 terminal_eph = X25519PrivateKey.generate()
                 session = self.sessions.create_session(
                     destination=source,
@@ -409,7 +339,7 @@ class Terminal:
                 )
                 signed_response = response.sign(signing_key=self.signing_key)
                 return self._router_rx.send(packet=signed_response)
-            case RouteResponse(_, source, request_id, route_id, destination_eph):
+            case SignedRouteRequest(RouteResponse(_, source, request_id, route_id, destination_eph)):
                 existed_session = self.sessions.get_session(request_id)
                 if existed_session is None:
                     source_short = address_from_full(source)
