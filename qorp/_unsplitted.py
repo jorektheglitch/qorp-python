@@ -9,6 +9,7 @@ from typing import Callable, NamedTuple, TypeAlias
 from .addresses import Address, ExternalAddress, FullAddress, address_from_full
 from .crypto import ChaCha20Poly1305, Ed25519PrivateKey, X25519PublicKey, X25519PrivateKey
 from .crypto import CHACHA_NONCE_LENGTH
+from .interactors import FrontendRX, FrontendTX, NetworkRX, RouterRX, RouterTX
 from .packets import Data, RouteRequest, RouteResponse, RouteError, SignedRouteRequest, SignedRouteResponse
 from .packets import QORPPacket, RequestInfoTriple
 from .utils.futures import Future, ConstFuture, set_ttl
@@ -30,22 +31,6 @@ class Networking(ABC):
         pass
 
 
-class NetworkRX(ABC):
-    @abstractmethod
-    def send(self, destination: ExternalAddress, packet: Packet) -> Future[None]:
-        pass
-
-    @abstractmethod
-    def propagate(self, packet: Packet, exclude: ExternalAddress) -> Future[None]:
-        pass
-
-
-class RouterRX(ABC):
-    @abstractmethod
-    def send(self, packet: Packet) -> Future[None]:
-        pass
-
-
 class RouterCallbackRX(RouterRX):
     def __init__(self, terminal: Terminal, callabck: Callable[[ExternalAddress, Packet], Future[None]]) -> None:
         super().__init__()
@@ -55,24 +40,6 @@ class RouterCallbackRX(RouterRX):
     def send(self, packet: Packet) -> Future[None]:
         origin = ExternalAddress(self._origin.address)
         return self._callback(origin, packet)
-
-
-class RouterTX(ABC):
-    @abstractmethod
-    def send(self, origin: ExternalAddress, packet: Packet) -> Future[None]:
-        pass
-
-
-class FrontendRX(ABC):
-    @abstractmethod
-    def send(self, source: Address, payload: bytes) -> Future[None]:
-        pass
-
-
-class FrontendTX(ABC):
-    @abstractmethod
-    def send(self, destination: Address, payload: bytes) -> Future[None]:
-        pass
 
 
 ReceivedResponse = tuple[ExternalAddress, SignedRouteResponse]
