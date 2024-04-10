@@ -2,73 +2,21 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from concurrent.futures import Future
 from dataclasses import dataclass
 from itertools import count
 from secrets import token_bytes
-from typing import Any, Callable, NamedTuple, NewType, Protocol, TypeVar, TypeVarTuple, Never
+from typing import Callable, NamedTuple, NewType
 
 from .addresses import Address, ExternalAddress, FullAddress, address_from_full
 from .crypto import ChaCha20Poly1305, Ed25519PrivateKey, X25519PublicKey, X25519PrivateKey
 from .crypto import CHACHA_NONCE_LENGTH
+from .utils.futures import Future, ConstFuture, set_ttl
+from .utils.timer import Timer
 
 
 EMPTY_SET: set[Future[ReceivedResponse]] = set()
 
 log = logging.getLogger(__name__)
-
-T = TypeVar("T")
-Ts = TypeVarTuple("Ts")
-Callback = Callable[[*Ts], Any]  # type: ignore
-
-
-class Timer(Protocol):
-    @abstractmethod
-    def call_later(self, delay: float, callback: Callback[*Ts], *args: *Ts) -> TimerHandle:
-        pass
-
-
-class TimerHandle(Protocol):
-    @abstractmethod
-    def cancel(self) -> None:
-        pass
-
-    @abstractmethod
-    def cancelled(self) -> bool:
-        pass
-
-
-class ConstFuture(Future[T]):
-    def __init__(self, *, result: T) -> None:
-        super().__init__()
-        self.set_result(result)
-
-
-class RaisesFuture(Future[Never]):  # type: ignore
-    def __init__(self, *, exc: Exception) -> None:
-        super().__init__()
-        self.set_exception(exc)
-
-
-def set_ttl(
-    timer: Timer,
-    ttl: float,
-    future: Future[T],
-    callback: Callable[[Future[T]], None] | None = None
-) -> TimerHandle:
-
-    def kill() -> None:
-        if future.done():
-            return
-        if callback is not None:
-            callback(future)
-        future.set_exception(
-            TimeoutError(f"Future {future} killed due to TTL expiration.")
-        )
-
-    handle = timer.call_later(ttl, kill)
-    return handle
-
 
 RouteID = NewType("RouteID", int)
 
