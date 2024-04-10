@@ -8,15 +8,12 @@ from itertools import count
 from secrets import token_bytes
 from typing import Any, Callable, NamedTuple, NewType, Protocol, TypeVar, TypeVarTuple, Never
 
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey, X25519PrivateKey
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-
 from .addresses import Address, ExternalAddress, FullAddress, address_from_full
+from .crypto import ChaCha20Poly1305, Ed25519PrivateKey, X25519PublicKey, X25519PrivateKey
+from .crypto import CHACHA_NONCE_LENGTH
 
 
 EMPTY_SET: set[Future[ReceivedResponse]] = set()
-CHACHA_NONCE_LENGTH = 12
 
 log = logging.getLogger(__name__)
 
