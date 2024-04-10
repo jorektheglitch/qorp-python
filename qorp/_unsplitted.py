@@ -9,11 +9,10 @@ from secrets import token_bytes
 from typing import Any, Callable, NamedTuple, NewType, Protocol, TypeVar, TypeVarTuple, Never
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey, X25519PrivateKey
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey, Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-from cryptography.hazmat.primitives.hashes import Hash, SHA3_256
 
-from cryptography.hazmat.primitives import serialization
+from .addresses import Address, ExternalAddress, FullAddress, address_from_full
 
 
 EMPTY_SET: set[Future[ReceivedResponse]] = set()
@@ -74,21 +73,7 @@ def set_ttl(
     return handle
 
 
-FullAddress = NewType("FullAddress", Ed25519PublicKey)
-ExternalAddress = NewType("ExternalAddress", Ed25519PublicKey)
-Address = NewType("Address", bytes)
 RouteID = NewType("RouteID", int)
-
-
-def address_from_full(full_addr: FullAddress) -> Address:
-    full_addr_bytes = full_addr.public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    hash = Hash(SHA3_256())
-    hash.update(full_addr_bytes)
-    key_hash = hash.finalize()
-    return Address(key_hash[:16])
 
 
 class Networking(ABC):
