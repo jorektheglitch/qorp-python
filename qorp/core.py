@@ -151,8 +151,18 @@ class Router:
         full_response.hop_count += 1
         # NOTE: (?) maybe check origin in request_info.origins before popping
         request_info = self._pending_requests.pop(response.request_info_triple, None)
-        if request_info:
-            request_info.future.set_result((origin, full_response))
+        if request_info is None:
+            log.debug("Drop RouteResponse for %s (%s) - no matched request",
+                      response.destination.hex(":", 4), response.source_route_id)
+            return ConstFuture(result=None)
+        # FIXME: make three-way route setup procedure
+        next_hop = request_info.origins[0]
+        route_info = RouteInfo(prev_hop=origin, next_hop=next_hop)
+        reverse_route_info = RouteInfo(prev_hop=next_hop, next_hop=origin)
+        self._routes[(response.destination, response.source_route_id)] = route_info
+        self._routes[(address_from_full(response.source), response.destination_route_id)] = reverse_route_info
+        for request_origin in request_info.origins:
+            self._forward_packet(origin=origin, destination=request_origin, packet=full_response)
         return ConstFuture(result=None)
 
     def handle_rerr(self, origin: ExternalAddress, error: RouteError) -> Future[None]:
@@ -168,7 +178,6 @@ class Router:
         future: Future[ReceivedResponse] = Future()
         request_info = self._pending_requests.setdefault(rreq_info, RequestInfo([], future))
         if future is request_info.future:
-            future.add_done_callback(self._done_request(rreq_info))
             set_ttl(
                 future=future,
                 scheduler=self._scheduler,
@@ -176,27 +185,6 @@ class Router:
                 callback=self._forgot_request(rreq_info)
             )
         return request_info
-
-    def _done_request(
-        self, request_info: RequestInfoTriple
-    ) -> Callable[[Future[ReceivedResponse]], None]:
-        def callback(future: Future[ReceivedResponse]) -> None:
-            if future.cancelled() or future.exception():
-                return
-            futures = self._pending_requests.pop(request_info, None)
-            if futures is None:
-                return
-            next_hop, full_response = future.result()
-            response = full_response.payload
-            # FIXME: make three-way route setup procedure
-            prev_hop = futures.origins[0]
-            route_info = RouteInfo(prev_hop=prev_hop, next_hop=next_hop)
-            reverse_route_info = RouteInfo(prev_hop=next_hop, next_hop=prev_hop)
-            self._routes[(response.destination, response.destination_route_id)] = route_info
-            self._routes[(address_from_full(response.source), response.source_route_id)] = reverse_route_info
-            for origin in futures.origins:
-                self._forward_packet(origin=next_hop, destination=origin, packet=full_response)
-        return callback
 
     def _forgot_request(
         self, request_info: RequestInfoTriple
