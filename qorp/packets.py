@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from qorp.addresses import Address, FullAddress, address_from_full
 from qorp.crypto import Ed25519PrivateKey, Ed25519PublicKey, X25519PublicKey
 from qorp.crypto import Encoding, PublicFormat, CHACHA_NONCE_LENGTH
+from qorp.crypto import InvalidSignature
 from qorp._types import RouteID, Buffer
 
 
@@ -115,6 +116,13 @@ class SignedRouteRequest(PacketBase):
     def __init__(self, payload: RouteRequest, sign: bytes, hop_count: int) -> None:
         super().__init__(payload=payload, sign=RawSign.from_buffer_copy(sign), hop_count=hop_count)
 
+    def verify(self) -> bool:
+        try:
+            self.payload.source.verify(bytes(self.sign), bytes(self.payload))
+        except InvalidSignature:
+            return False
+        return True
+
 
 class RouteResponse(Structure):
     _fields_ = [
@@ -188,6 +196,13 @@ class SignedRouteResponse(PacketBase):
 
     def __init__(self, payload: RouteResponse, sign: bytes, hop_count: int) -> None:
         super().__init__(payload=payload, sign=RawSign.from_buffer_copy(sign), hop_count=hop_count)
+
+    def verify(self) -> bool:
+        try:
+            self.payload.source.verify(bytes(self.sign), bytes(self.payload))
+        except InvalidSignature:
+            return False
+        return True
 
 
 class RouteError(PacketBase):
