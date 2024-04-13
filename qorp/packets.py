@@ -60,6 +60,10 @@ class RouteRequest(BigEndianStructure):
     source_eph_raw: bytes
     max_hop_count: int
 
+    __match_args__ = (
+        "destination", "source", "source_route_id", "source_eph", "max_hop_count"
+    )
+
     @property
     def destination(self) -> Address:
         return Address(self.destination_raw)
@@ -93,6 +97,8 @@ class SignedRouteRequest(PacketBase):
     sign: bytes
     hop_count: int
 
+    __match_args__ = ("payload", "sign", "hop_count")
+
 
 class RouteResponse(Structure):
     _fields_ = [
@@ -109,6 +115,10 @@ class RouteResponse(Structure):
     destination_route_id: RouteID
     destination_eph_raw: bytes
     max_hop_count: int
+
+    __match_args__ = (
+        "destination", "source", "source_route_id", "destination_route_id", "destination_eph", "max_hop_count"
+    )
 
     @property
     def destination(self) -> Address:
@@ -143,10 +153,14 @@ class SignedRouteResponse(PacketBase):
     sign: bytes
     hop_count: int
 
+    __match_args__ = ("payload", "sign", "hop_count")
+
 
 class RouteError(PacketBase):
     route_destination: Address
     route_id: RouteID
+
+    __match_args__ = ("route_destination", "route_id")
 
 
 class RouteOptimization(PacketBase):
@@ -176,6 +190,8 @@ class Data(PacketBase):
     chacha_nonce: bytes
     payload_length: int
     payload: bytes
+
+    __match_args__ = ("destination", "route_id", "chacha_nonce", "payload")
 
     @property
     def destination(self) -> Address:

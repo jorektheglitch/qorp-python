@@ -294,7 +294,7 @@ class Terminal:
 
     def _incoming_packet_callback(self, origin: ExternalAddress, packet: Packet) -> Future[None]:
         match packet:
-            case Data(_, session_id, chacha_nonce, _, payload):
+            case Data(_, session_id, chacha_nonce, encrypted_payload):
                 session = self.sessions.get_session(session_id)
                 if not session:
                     log.warning("Drop data for unknown session %s", session_id)
@@ -304,7 +304,7 @@ class Terminal:
                 # TODO: parse payload and process it somehow
                 source_short = address_from_full(session.destination)
                 return self._frontend_rx.send(source=source_short, payload=payload)
-            case SignedRouteRequest(_, source, request_id, source_eph):
+            case SignedRouteRequest(RouteRequest(_, source, request_id, source_eph)):
                 terminal_eph = X25519PrivateKey.generate()
                 session = self.sessions.create_session(
                     destination=source,
@@ -325,7 +325,7 @@ class Terminal:
                 )
                 signed_response = response.sign(signing_key=self.signing_key)
                 return self._router_rx.send(packet=signed_response)
-            case SignedRouteResponse(_, source, request_id, route_id, destination_eph):
+            case SignedRouteResponse(RouteResponse(_, source, request_id, route_id, destination_eph)):
                 existed_session = self.sessions.get_session(request_id)
                 if existed_session is None:
                     source_short = address_from_full(source)
