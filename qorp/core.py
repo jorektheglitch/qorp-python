@@ -132,9 +132,9 @@ class Router:
 
     def handle_rreq(self, origin: ExternalAddress, full_request: SignedRouteRequest) -> Future[None]:
         request = full_request.payload
-        full_request.hop_count += 1
-        if full_request.hop_count > request.max_hop_count:
+        if full_request.hop_count >= request.max_hop_count:
             return ConstFuture(result=None)
+        full_request.hop_count += 1
         if (request.source, request.source_route_id) in self._routes:
             return ConstFuture(result=None)
         request_info = self._register_request(request.info_triple)
@@ -146,9 +146,9 @@ class Router:
 
     def handle_rrep(self, origin: ExternalAddress, full_response: SignedRouteResponse) -> Future[None]:
         response = full_response.payload
-        full_response.hop_count += 1
-        if full_response.hop_count > response.max_hop_count:
+        if full_response.hop_count >= response.max_hop_count:
             return ConstFuture(result=None)
+        full_response.hop_count += 1
         # NOTE: (?) maybe check origin in request_info.origins before popping
         request_info = self._pending_requests.pop(response.request_info_triple, None)
         if request_info:
