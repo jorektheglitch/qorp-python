@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ctypes import BigEndianStructure, c_char, c_uint16, c_uint32, c_uint8
 from functools import lru_cache
-from typing import NamedTuple, TypeVar
+from typing import ClassVar, NamedTuple, TypeVar
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ctypes import _CData
@@ -21,15 +21,22 @@ class RequestInfoTriple(NamedTuple):
     route_id: RouteID
 
 
-class PacketBase(BigEndianStructure):
-    _fields_: list[tuple[str, type[_CData]] | tuple[str, type[_CData], int]]
+class Structure(BigEndianStructure):
+    _pack_ = 1
+    _fields_: ClassVar[list[tuple[str, type[_CData]] | tuple[str, type[_CData], int]]]
+
+    def __hash__(self) -> int:
+        return int.from_bytes(self)
+
+
+class PacketBase(Structure):
 
     @classmethod
     def from_bytes(cls: type[AnyPacket], raw: Buffer) -> AnyPacket:
         return cls.from_buffer_copy(raw)
 
 
-class UnsignedRouteRequest(BigEndianStructure):
+class RouteRequest(Structure):
     _fields_ = [
         ("destination_raw", c_char*16),
         ("source_raw", c_char*32),
@@ -87,7 +94,7 @@ class SignedRouteRequest(PacketBase):
     hop_count: int
 
 
-class RouteResponse(BigEndianStructure):
+class RouteResponse(Structure):
     _fields_ = [
         ("destination_raw", c_char*16),
         ("source_raw", c_char*32),
