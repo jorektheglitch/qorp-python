@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from ctypes import BigEndianStructure, c_char, c_ubyte, c_uint16, c_uint32, c_uint8, Array
 from functools import lru_cache
-from typing import ClassVar, NamedTuple, TypeVar
+from typing import ClassVar, NamedTuple, Self, TypeVar
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ctypes import _CData
 
 from qorp.addresses import Address, FullAddress, address_from_full
 from qorp.crypto import Ed25519PrivateKey, Ed25519PublicKey, X25519PublicKey
-from qorp.crypto import CHACHA_NONCE_LENGTH
+from qorp.crypto import Encoding, PublicFormat, CHACHA_NONCE_LENGTH
 from qorp._types import RouteID, Buffer
 
 
@@ -59,6 +59,24 @@ class RouteRequest(Structure):
         "destination", "source", "source_route_id", "source_eph", "max_hop_count"
     )
 
+    def __init__(self,
+                 destination: Address,
+                 source: FullAddress,
+                 source_route_id: RouteID,
+                 source_eph: X25519PublicKey,
+                 max_hop_count: int,
+                 ) -> None:
+        destination_raw = RawAddress.from_buffer_copy(destination)
+        source_raw = RawFullAddress.from_buffer_copy(source.public_bytes(Encoding.Raw, PublicFormat.Raw))
+        source_eph_raw = RawPubKey.from_buffer_copy(source_eph.public_bytes(Encoding.Raw, PublicFormat.Raw))
+        return super().__init__(
+            destination_raw=destination_raw,
+            source_raw=source_raw,
+            source_route_id=source_route_id,
+            source_eph_raw=source_eph_raw,
+            max_hop_count=max_hop_count,
+        )
+
     @property
     def destination(self) -> Address:
         return Address(bytes(self.destination_raw))
@@ -94,6 +112,9 @@ class SignedRouteRequest(PacketBase):
 
     __match_args__ = ("payload", "sign", "hop_count")
 
+    def __init__(self, payload: RouteRequest, sign: bytes, hop_count: int) -> None:
+        super().__init__(payload=payload, sign=RawSign.from_buffer_copy(sign), hop_count=hop_count)
+
 
 class RouteResponse(Structure):
     _fields_ = [
@@ -114,6 +135,21 @@ class RouteResponse(Structure):
     __match_args__ = (
         "destination", "source", "source_route_id", "destination_route_id", "destination_eph", "max_hop_count"
     )
+
+    def __init__(self,
+                 destination: Address, source: FullAddress,
+                 source_route_id: RouteID, destination_route_id: RouteID,
+                 destination_eph: X25519PublicKey,
+                 max_hop_count: int,
+                 ) -> None:
+        return super().__init__(
+            destination_raw=RawAddress.from_buffer_copy(destination),
+            source_raw=RawFullAddress.from_buffer_copy(source.public_bytes(Encoding.Raw, PublicFormat.Raw)),
+            source_route_id=source_route_id,
+            destination_route_id=destination_route_id,
+            destination_eph_raw=RawPubKey.from_buffer_copy(destination_eph.public_bytes(Encoding.Raw, PublicFormat.Raw)),
+            max_hop_count=max_hop_count,
+        )
 
     @property
     def destination(self) -> Address:
@@ -150,12 +186,21 @@ class SignedRouteResponse(PacketBase):
 
     __match_args__ = ("payload", "sign", "hop_count")
 
+    def __init__(self, payload: RouteResponse, sign: bytes, hop_count: int) -> None:
+        super().__init__(payload=payload, sign=RawSign.from_buffer_copy(sign), hop_count=hop_count)
+
 
 class RouteError(PacketBase):
     route_destination: Address
     route_id: RouteID
 
     __match_args__ = ("route_destination", "route_id")
+
+    def __init__(self,
+                 route_destination: Address,
+                 route_id: RouteID
+                 ) -> None:
+        return super().__init__(route_destination=route_destination, route_id=route_id)
 
 
 class RouteOptimization(PacketBase):
@@ -187,6 +232,27 @@ class Data(PacketBase):
     payload: Array[c_ubyte]
 
     __match_args__ = ("destination", "route_id", "chacha_nonce", "payload")
+
+    def __new__(cls: type[Self], *args, **kwargs) -> Self:  # type: ignore
+        if cls is Data:
+            cls = cls.for_length(len(kwargs.get('payload')))  # type: ignore
+        return super().__new__(cls, *args, **kwargs)
+
+    def __init__(self,
+                 destination: Address,
+                 route_id: RouteID,
+                 chacha_nonce: bytes,
+                 *,
+                 payload: bytes,
+                 ) -> None:
+        payload_length = len(payload)
+        return super().__init__(
+            destination_raw=RawAddress.from_buffer_copy(destination),
+            route_id=route_id,
+            chacha_nonce=RawNonce.from_buffer_copy(chacha_nonce),
+            payload_length=payload_length,
+            payload=(c_ubyte*payload_length).from_buffer_copy(payload),
+        )
 
     @property
     def destination(self) -> Address:

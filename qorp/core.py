@@ -370,7 +370,6 @@ class Terminal:
                 destination=destination,
                 route_id=session_id,
                 chacha_nonce=nonce,
-                payload_length=len(encrypted_data),
                 payload=encrypted_data,
             )
             return self._router_rx.send(packet=data_packet)
