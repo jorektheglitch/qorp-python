@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ctypes import BigEndianStructure, c_char, c_uint16, c_uint32, c_uint8
+from ctypes import BigEndianStructure, c_char, c_ubyte, c_uint16, c_uint32, c_uint8, Array
 from functools import lru_cache
 from typing import ClassVar, NamedTuple, TypeVar
 from typing import TYPE_CHECKING
@@ -9,10 +9,15 @@ if TYPE_CHECKING:
 
 from qorp.addresses import Address, FullAddress, address_from_full
 from qorp.crypto import Ed25519PrivateKey, Ed25519PublicKey, X25519PublicKey
+from qorp.crypto import CHACHA_NONCE_LENGTH
 from qorp._types import RouteID, Buffer
 
 
 AnyPacket = TypeVar("AnyPacket", bound="PacketBase")
+RawAddress = c_ubyte*16
+RawFullAddress = RawPubKey = c_ubyte*32
+RawNonce = c_ubyte*CHACHA_NONCE_LENGTH
+RawSign = c_ubyte*64
 
 
 class RequestInfoTriple(NamedTuple):
@@ -38,26 +43,16 @@ class PacketBase(Structure):
 
 class RouteRequest(Structure):
     _fields_ = [
-        ("destination_raw", c_char*16),
-        ("source_raw", c_char*32),
-        ("request_id", c_uint32),
-        ("source_eph_raw", c_char*32),
-        ("max_hop_count", c_uint8),
-    ]
-
-
-class RouteRequest(BigEndianStructure):
-    _fields_ = [
-        ("destination_raw", c_char*16),
-        ("source_raw", c_char*32),
+        ("destination_raw", RawAddress),
+        ("source_raw", RawFullAddress),
         ("source_route_id", c_uint32),
-        ("source_eph_raw", c_char*32),
+        ("source_eph_raw", RawPubKey),
         ("max_hop_count", c_uint8),
     ]
-    destination_raw: bytes
-    source_raw: bytes
+    destination_raw: Array[c_ubyte]
+    source_raw: Array[c_ubyte]
     source_route_id: RouteID
-    source_eph_raw: bytes
+    source_eph_raw: Array[c_ubyte]
     max_hop_count: int
 
     __match_args__ = (
@@ -66,16 +61,16 @@ class RouteRequest(BigEndianStructure):
 
     @property
     def destination(self) -> Address:
-        return Address(self.destination_raw)
+        return Address(bytes(self.destination_raw))
 
     @property
     def source(self) -> FullAddress:
-        signing_key = Ed25519PublicKey.from_public_bytes(self.source_raw)
+        signing_key = Ed25519PublicKey.from_public_bytes(bytes(self.source_raw))
         return FullAddress(signing_key)
 
     @property
     def source_eph(self) -> X25519PublicKey:
-        return X25519PublicKey.from_public_bytes(self.source_eph_raw)
+        return X25519PublicKey.from_public_bytes(bytes(self.source_eph_raw))
 
     @property
     def info_triple(self) -> RequestInfoTriple:
@@ -90,11 +85,11 @@ class RouteRequest(BigEndianStructure):
 class SignedRouteRequest(PacketBase):
     _fields_ = [
         ("payload", RouteRequest),
-        ("sign", c_char*64),
+        ("sign", RawSign),
         ("hop_count", c_uint8),
     ]
     payload: RouteRequest
-    sign: bytes
+    sign: Array[c_ubyte]
     hop_count: int
 
     __match_args__ = ("payload", "sign", "hop_count")
@@ -102,18 +97,18 @@ class SignedRouteRequest(PacketBase):
 
 class RouteResponse(Structure):
     _fields_ = [
-        ("destination_raw", c_char*16),
-        ("source_raw", c_char*32),
+        ("destination_raw", RawAddress),
+        ("source_raw", RawFullAddress),
         ("source_route_id", c_uint32),
         ("destination_route_id", c_uint32),
-        ("destination_eph_raw", c_char*32),
-        ("sign", c_char*64),
+        ("destination_eph_raw", RawPubKey),
+        ("max_hop_count", c_uint8),
     ]
-    destination_raw: bytes
-    source_raw: bytes
+    destination_raw: Array[c_ubyte]
+    source_raw: Array[c_ubyte]
     source_route_id: RouteID
     destination_route_id: RouteID
-    destination_eph_raw: bytes
+    destination_eph_raw: Array[c_ubyte]
     max_hop_count: int
 
     __match_args__ = (
@@ -122,16 +117,16 @@ class RouteResponse(Structure):
 
     @property
     def destination(self) -> Address:
-        return Address(self.destination_raw)
+        return Address(bytes(self.destination_raw))
 
     @property
     def source(self) -> FullAddress:
-        signing_key = Ed25519PublicKey.from_public_bytes(self.source_raw)
+        signing_key = Ed25519PublicKey.from_public_bytes(bytes(self.source_raw))
         return FullAddress(signing_key)
 
     @property
     def destination_eph(self) -> X25519PublicKey:
-        return X25519PublicKey.from_public_bytes(self.destination_eph_raw)
+        return X25519PublicKey.from_public_bytes(bytes(self.destination_eph_raw))
 
     @property
     def request_info_triple(self) -> RequestInfoTriple:
@@ -146,11 +141,11 @@ class RouteResponse(Structure):
 class SignedRouteResponse(PacketBase):
     _fields_ = [
         ("payload", RouteResponse),
-        ("sign", c_char*64),
+        ("sign", RawSign),
         ("hop_count", c_uint8),
     ]
     payload: RouteResponse
-    sign: bytes
+    sign: Array[c_ubyte]
     hop_count: int
 
     __match_args__ = ("payload", "sign", "hop_count")
@@ -180,29 +175,29 @@ class DataHeader(PacketBase):
 
 class Data(PacketBase):
     _fields_ = [
-        ("destination_raw", c_char*16),
+        ("destination_raw", RawAddress),
         ("route_id", c_uint32),
-        ("chacha_nonce", c_char*12),
+        ("chacha_nonce", RawNonce),
         ("length", c_uint16),
     ]
-    destination_raw: bytes
+    destination_raw: Array[c_ubyte]
     route_id: RouteID
-    chacha_nonce: bytes
+    chacha_nonce: Array[c_ubyte]
     payload_length: int
-    payload: bytes
+    payload: Array[c_ubyte]
 
     __match_args__ = ("destination", "route_id", "chacha_nonce", "payload")
 
     @property
     def destination(self) -> Address:
-        return Address(self.destination_raw)
+        return Address(bytes(self.destination_raw))
 
     @classmethod
     @lru_cache
     def for_length(cls, len: int) -> type[Data]:
         class SpecificLengthData(Data):
             _fields_ = [
-                ("payload", c_char*len)
+                ("payload", c_ubyte*len)
             ]
 
         return SpecificLengthData

@@ -300,7 +300,7 @@ class Terminal:
                     log.warning("Drop data for unknown session %s", session_id)
                     # NOTE: maybe somehow notify other node that session id is invalid?
                     return ConstFuture(result=None)
-                payload = session.encryption_key.decrypt(chacha_nonce, payload, None)
+                payload = session.encryption_key.decrypt(bytes(chacha_nonce), bytes(encrypted_payload), None)
                 # TODO: parse payload and process it somehow
                 source_short = address_from_full(session.destination)
                 return self._frontend_rx.send(source=source_short, payload=payload)
