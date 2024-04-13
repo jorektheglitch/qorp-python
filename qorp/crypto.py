@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Protocol, Self, TypeVar
 from typing import TYPE_CHECKING
 
+from cryptography.exceptions import InvalidSignature  # noqa: F401
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.hashes import Hash, SHA3_256
 
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
 
 CHACHA_NONCE_LENGTH = 12
@@ -114,21 +115,21 @@ if TYPE_CHECKING:
                  encoding: SupportedEncoding, format: SupportedFormat, encryption: SupportedEncryption
                  ) -> None: pass
     sig_priv(Ed25519PrivateKey.generate(),
-             serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+             Encoding.Raw, PrivateFormat.Raw, NoEncryption())
 
     def sig_pub(key: SigningPublicKey[SupportedEncoding, SupportedFormat],
                 encoding: SupportedEncoding, format: SupportedFormat) -> None: pass
-    sig_pub(Ed25519PublicKey.from_public_bytes(b''), serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    sig_pub(Ed25519PublicKey.from_public_bytes(b''), Encoding.Raw, PublicFormat.Raw)
 
     def kex_priv(key: KExPrivateKey[KExPublicKeyT, SupportedEncoding, SupportedFormat, SupportedEncryption],
                  encoding: SupportedEncoding, format: SupportedFormat, encryption: SupportedEncryption
                  ) -> None: pass
     kex_priv(X25519PrivateKey.generate(),
-             serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+             Encoding.Raw, PrivateFormat.Raw, NoEncryption())
 
     def kex_pub(key: KExPublicKey[SupportedEncoding, SupportedFormat],
                 encoding: SupportedEncoding, format: SupportedFormat) -> None: pass
-    kex_pub(X25519PublicKey.from_public_bytes(b''), serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    kex_pub(X25519PublicKey.from_public_bytes(b''), Encoding.Raw, PublicFormat.Raw)
 
     def aead(cipher: AEADCipher) -> None: pass
     aead(ChaCha20Poly1305(b''))

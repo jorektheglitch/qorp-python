@@ -7,10 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ctypes import _CData
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 from qorp.addresses import Address, FullAddress, address_from_full
-from qorp.crypto import Ed25519PrivateKey
+from qorp.crypto import Ed25519PrivateKey, Ed25519PublicKey, X25519PublicKey
 from qorp._types import RouteID, Buffer
 
 

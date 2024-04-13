@@ -1,8 +1,8 @@
 from typing import NewType
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from cryptography.hazmat.primitives.hashes import Hash, SHA3_256
-from cryptography.hazmat.primitives import serialization
+from qorp.crypto import Ed25519PublicKey
+from qorp.crypto import Hash, SHA3_256
+from qorp.crypto import Encoding, PublicFormat
 
 
 FullAddress = NewType("FullAddress", Ed25519PublicKey)
@@ -12,8 +12,8 @@ Address = NewType("Address", bytes)
 
 def address_from_full(full_addr: FullAddress) -> Address:
     full_addr_bytes = full_addr.public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
+        encoding=Encoding.Raw,
+        format=PublicFormat.Raw,
     )
     hash = Hash(SHA3_256())
     hash.update(full_addr_bytes)
