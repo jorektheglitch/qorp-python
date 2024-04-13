@@ -1,7 +1,7 @@
 from concurrent.futures import Future
 from typing import Any, Callable, TypeVar
 
-from .timer import Timer, TimerHandle
+from .timer import Scheduler, ScheduleHandle
 
 
 T = TypeVar("T")
@@ -20,11 +20,11 @@ class RaisesFuture(Future[Any]):  # type: ignore
 
 
 def set_ttl(
-    timer: Timer,
+    scheduler: Scheduler,
     ttl: float,
     future: Future[T],
     callback: Callable[[Future[T]], None] | None = None
-) -> TimerHandle:
+) -> ScheduleHandle:
 
     def kill() -> None:
         if future.done():
@@ -35,5 +35,5 @@ def set_ttl(
             TimeoutError(f"Future {future} killed due to TTL expiration.")
         )
 
-    handle = timer.call_later(ttl, kill)
+    handle = scheduler.call_later(ttl, kill)
     return handle

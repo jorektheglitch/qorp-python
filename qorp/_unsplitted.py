@@ -9,7 +9,7 @@ from .crypto import Ed25519PrivateKey
 from .interactors import FrontendRX, NetworkRX
 from .packets import QORPPacket
 from .utils.futures import Future, ConstFuture
-from .utils.timer import Timer
+from .utils.timer import Scheduler
 
 
 log = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class DefaultFrontend(Frontend):
 
 
 class RouterFactory(Protocol):
-    def __call__(self, network: NetworkingProtocol, *, timer: Timer) -> Router:
+    def __call__(self, network: NetworkingProtocol, *, scheduler: Scheduler) -> Router:
         pass
 
 
@@ -76,7 +76,7 @@ class QORPNode:
                  router_factory: RouterFactory = Router,
                  frontend: Frontend | None = None,
                  *,
-                 timer: Timer,
+                 scheduler: Scheduler,
                  ) -> None:
         if networking is not None:
             self._networking = networking
@@ -84,7 +84,7 @@ class QORPNode:
         else:
             self._identity_key = identity_key or Ed25519PrivateKey.generate()
             self._networking = DefaultNetworking(self._identity_key)
-        self._router = router_factory(self._networking, timer=timer)
+        self._router = router_factory(self._networking, scheduler=scheduler)
         self._frontend = frontend or DefaultFrontend()
 
     def create_terminal(self,

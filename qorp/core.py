@@ -12,7 +12,7 @@ from .interactors import FrontendRX, FrontendTX, NetworkRX, NetworkTX, RouterRX,
 from .packets import Data, RouteError, RouteRequest, RouteResponse, SignedRouteRequest, SignedRouteResponse, QORPPacket
 from .packets import RequestInfoTriple
 from .utils.futures import Future, ConstFuture, set_ttl
-from .utils.timer import Timer
+from .utils.timer import Scheduler
 from ._types import RouteID
 
 
@@ -71,14 +71,14 @@ class NetworkCallbackTX(NetworkTX):
 
 class Router:
     _network_rx: NetworkRX
-    _timer: Timer
+    _scheduler: Scheduler
     _routes: dict[tuple[Address, RouteID], RouteInfo]
     _pending_requests: dict[RequestInfoTriple, RequestInfo]
     _route_request_timeout: float = 10
 
-    def __init__(self, network: NetworkingProtocol, *, timer: Timer) -> None:
+    def __init__(self, network: NetworkingProtocol, *, scheduler: Scheduler) -> None:
         self._network_rx = network.attach(self)
-        self._timer = timer
+        self._scheduler = scheduler
         self._pending_requests = {}
         self._routes = {}
         self._terminals: dict[Address, Terminal] = {}
@@ -171,7 +171,7 @@ class Router:
             future.add_done_callback(self._done_request(rreq_info))
             set_ttl(
                 future=future,
-                timer=self._timer,
+                scheduler=self._scheduler,
                 ttl=self._route_request_timeout,
                 callback=self._forgot_request(rreq_info)
             )

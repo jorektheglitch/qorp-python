@@ -3,17 +3,17 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Callable, Protocol, TypeVarTuple
 
-Ts = TypeVarTuple("Ts")
-Callback = Callable[[*Ts], Any]  # type: ignore
+Args = TypeVarTuple("Args")
+Callback = Callable[[*Args], Any]  # type: ignore
 
 
-class Timer(Protocol):
+class Scheduler(Protocol):
     @abstractmethod
-    def call_later(self, delay: float, callback: Callback[*Ts], *args: *Ts) -> TimerHandle:
+    def call_later(self, delay: float, callback: Callback[*Args], *args: *Args) -> ScheduleHandle:
         pass
 
 
-class TimerHandle(Protocol):
+class ScheduleHandle(Protocol):
     @abstractmethod
     def cancel(self) -> None:
         pass
