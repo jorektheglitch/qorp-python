@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from functools import cached_property
 from typing import NewType
 
 from qorp.crypto import Ed25519PublicKey
@@ -23,3 +25,31 @@ def address_from_key(pubkey: Ed25519PublicKey) -> Address:
     hash.update(pubkey_bytes)
     key_hash = hash.finalize()
     return Address(key_hash[:16])
+
+
+def format_bytes(b: bytes) -> str:
+    return b.hex(sep=":", bytes_per_sep=4)
+
+
+@dataclass(frozen=True)
+class PubkeyView:
+    pubkey: Ed25519PublicKey
+
+    @cached_property
+    def _as_str(self) -> str:
+        return format_bytes(address_from_key(self.pubkey))
+
+    def __str__(self) -> str:
+        return self._as_str
+
+
+@dataclass(frozen=True)
+class BytesView:
+    data: bytes
+
+    @cached_property
+    def _as_str(self) -> str:
+        return format_bytes(self.data)
+
+    def __str__(self) -> str:
+        return self._as_str

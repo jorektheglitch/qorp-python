@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from itertools import count
+from logging import getLogger, Logger
 from secrets import token_bytes
 from typing import Callable, NamedTuple, Protocol, TypeAlias
 
-from .addresses import Address, ExternalAddress, FullAddress, address_from_full
+from .addresses import Address, BytesView, ExternalAddress, FullAddress, PubkeyView, address_from_full
 from .crypto import CHACHA_NONCE_LENGTH, ChaCha20Poly1305, Ed25519PrivateKey, X25519PrivateKey, X25519PublicKey
 from .interactors import FrontendRX, FrontendTX, NetworkRX, NetworkTX, RouterRX, RouterTX
 from .packets import Data, RouteError, RouteRequest, RouteResponse, SignedRouteRequest, SignedRouteResponse, QORPPacket
@@ -16,7 +16,7 @@ from .utils.timer import Scheduler
 from ._types import RouteID
 
 
-log = logging.getLogger(__name__)
+log = getLogger(__name__)
 
 Packet: TypeAlias = QORPPacket
 ReceivedResponse = tuple[ExternalAddress, SignedRouteResponse]
@@ -76,12 +76,18 @@ class Router:
     _pending_requests: dict[RequestInfoTriple, RequestInfo]
     _route_request_timeout: float = 10
 
-    def __init__(self, network: NetworkingProtocol, *, scheduler: Scheduler) -> None:
-        self._network_rx = network.attach(self)
+    def __init__(self,
+                 network: NetworkingProtocol,
+                 *,
+                 scheduler: Scheduler,
+                 logger: Logger = log,
+                 ) -> None:
         self._scheduler = scheduler
+        self._logger = logger or log
         self._pending_requests = {}
         self._routes = {}
         self._terminals: dict[Address, Terminal] = {}
+        self._network_rx = network.attach(self)
 
     @property
     def network_tx(self) -> NetworkTX:
@@ -111,62 +117,101 @@ class Router:
 
     def _forward_packet(self, origin: ExternalAddress, destination: ExternalAddress, packet: Packet) -> Future[None]:
         if (target_terminal := self._terminals.get(address_from_full(FullAddress(destination)))):
+            self._logger.debug("Forward %s packet to terminal %s",
+                               packet.__class__.__name__, PubkeyView(destination))
             return target_terminal.router_tx.send(origin, packet)
+        self._logger.debug("Forward %s packet to %s",
+                           packet.__class__.__name__, PubkeyView(destination))
         return self._network_rx.send(destination=destination, packet=packet)
 
     def _propagate_packet(self, origin: ExternalAddress, packet: SignedRouteRequest) -> Future[None]:
         if (target_terminal := self._terminals.get(packet.payload.destination)):
+            self._logger.debug("Propagate %s packet from %s to terminal %s",
+                               packet.__class__.__name__, PubkeyView(origin), PubkeyView(target_terminal.address))
             return target_terminal.router_tx.send(origin, packet)
+        self._logger.debug("Propagate %s packet from %s to Network",
+                           packet.__class__.__name__, PubkeyView(origin))
         return self._network_rx.propagate(packet, exclude=origin)
 
     def handle_data(self, origin: ExternalAddress, data: Data) -> Future[None]:
         route_pair = data.destination, data.route_id
+        log_pair = BytesView(data.destination), data.route_id
+        self._logger.debug("From %s got Data for %s (route id %s)",
+                           PubkeyView(origin), *log_pair)
         route = self._routes.get(route_pair)
         if route is None:
+            self._logger.debug("Send RouteError for %s (route id %s)", *log_pair)
             rerr = RouteError(*route_pair)
             return self._network_rx.send(origin, rerr)
         prev_hop, next_hop = route
         if prev_hop != origin:
+            self._logger.debug("Drop Data for %s (route id %s) - unexpected origin %s",
+                               *log_pair, PubkeyView(origin))
             return ConstFuture(result=None)
         return self._forward_packet(origin=origin, destination=next_hop, packet=data)
 
     def handle_rreq(self, origin: ExternalAddress, full_request: SignedRouteRequest) -> Future[None]:
         request = full_request.payload
+        log_triple = PubkeyView(request.source), request.source_route_id, BytesView(request.destination)
+        self._logger.debug("From %s got RouteRequest from %s (%s) for %s",
+                           PubkeyView(origin), *log_triple)
         if full_request.hop_count >= request.max_hop_count:
+            self._logger.info("Drop RouteRequest from %s (%s) for %s - hop count >= max hop count",
+                              *log_triple)
             return ConstFuture(result=None)
         full_request.hop_count += 1
         if (request.source, request.source_route_id) in self._routes:
+            self._logger.info("Drop RouteRequest from %s (%s) for %s - route already established",
+                              *log_triple)
             return ConstFuture(result=None)
         request_info = self._register_request(request.info_triple)
         first_seen = (not request_info.origins)
         request_info.origins.append(origin)
         if not first_seen:
+            self._logger.debug("Skip propagation of RouteRequest from %s (%s) for %s - not first seen",
+                               *log_triple)
             return ConstFuture(result=None)
+        self._logger.debug("Propagate RouteRequest from %s (%s) for %s",
+                           *log_triple)
         return self._propagate_packet(origin=origin, packet=full_request)
 
     def handle_rrep(self, origin: ExternalAddress, full_response: SignedRouteResponse) -> Future[None]:
         response = full_response.payload
+        log_quad = (BytesView(response.destination), response.source_route_id,
+                    PubkeyView(response.source), response.destination_route_id)
+        self._logger.debug("From %s got RouteResponse for %s (%s) from %s (%s) ",
+                           PubkeyView(origin), *log_quad)
         if full_response.hop_count >= response.max_hop_count:
+            self._logger.info("Drop RouteResponse from %s (%s) for %s (%s) - hop count >= max hop count",
+                              *log_quad)
             return ConstFuture(result=None)
         full_response.hop_count += 1
         # NOTE: (?) maybe check origin in request_info.origins before popping
         request_info = self._pending_requests.pop(response.request_info_triple, None)
         if request_info is None:
-            log.debug("Drop RouteResponse for %s (%s) - no matched request",
-                      response.destination.hex(":", 4), response.source_route_id)
+            self._logger.debug("Drop RouteResponse from %s (%s) for %s (%s) - no matched request",
+                               *log_quad)
             return ConstFuture(result=None)
         # FIXME: make three-way route setup procedure
         next_hop = request_info.origins[0]
         route_info = RouteInfo(prev_hop=origin, next_hop=next_hop)
         reverse_route_info = RouteInfo(prev_hop=next_hop, next_hop=origin)
+        self._logger.debug("Add route to %s (%s): from %s via %s",
+                           BytesView(response.destination), response.source_route_id,
+                           *map(PubkeyView, route_info))
         self._routes[(response.destination, response.source_route_id)] = route_info
-        self._routes[(address_from_full(response.source), response.destination_route_id)] = reverse_route_info
+        response_source = address_from_full(response.source)
+        self._logger.debug("Add route to %s (%s): from %s via %s",
+                           BytesView(response_source), response.destination_route_id,
+                           *map(PubkeyView, reverse_route_info))
+        self._routes[(response_source, response.destination_route_id)] = reverse_route_info
         for request_origin in request_info.origins:
             self._forward_packet(origin=origin, destination=request_origin, packet=full_response)
         return ConstFuture(result=None)
 
     def handle_rerr(self, origin: ExternalAddress, error: RouteError) -> Future[None]:
         route_pair = error.route_destination, error.route_id
+        self._logger.debug("Got RouteError for %s (route id %s)", *route_pair)
         route_info = self._routes.get(route_pair)
         if route_info and route_info.next_hop == origin:
             # TODO: remove reverse route too
@@ -190,6 +235,9 @@ class Router:
         self, request_info: RequestInfoTriple
     ) -> Callable[[Future[ReceivedResponse]], None]:
         def callback(future: Future[ReceivedResponse]) -> None:
+            self._logger.info("Frogot RouteRequest from %s (%s) for %s - timeout exceed",
+                              BytesView(request_info.source), request_info.route_id,
+                              BytesView(request_info.destination))
             self._pending_requests.pop(request_info, None)
         return callback
 
@@ -263,14 +311,20 @@ class RouterCallbackTX(RouterTX):
 
 class Terminal:
 
-    def __init__(self, signing_key: Ed25519PrivateKey, router: Router, frontend: Frontend) -> None:
+    def __init__(self,
+                 signing_key: Ed25519PrivateKey,
+                 router: Router, frontend: Frontend,
+                 *,
+                 logger: Logger = log,
+                 ) -> None:
         self.address = FullAddress(signing_key.public_key())
         self.routes: dict[Address, RouteID] = {}
         self.sessions = SessionsManager()
         self.session_requests: dict[Address, SessionRequest] = {}
         self.signing_key: Ed25519PrivateKey = signing_key
-        self._router_rx = router.attach(self)
+        self._logger = logger
         self._frontend_rx = frontend.attach(self)
+        self._router_rx = router.attach(self)
 
     @property
     def frontend_tx(self) -> FrontendTX:
@@ -284,15 +338,20 @@ class Terminal:
         match packet:
             case Data(_, session_id, chacha_nonce, encrypted_payload):
                 session = self.sessions.get_session(session_id)
+                self._logger.debug("Got Data for session %s", session_id)
                 if not session:
-                    log.warning("Drop data for unknown session %s", session_id)
+                    self._logger.warning("Drop Data for unknown session %s", session_id)
                     # NOTE: maybe somehow notify other node that session id is invalid?
                     return ConstFuture(result=None)
                 payload = session.encryption_key.decrypt(bytes(chacha_nonce), bytes(encrypted_payload), None)
                 # TODO: parse payload and process it somehow
                 source_short = address_from_full(session.destination)
+                self._logger.debug("Pass decrypted payload (session %s) to frontend (%s bytes)",
+                                   session_id, len(payload))
                 return self._frontend_rx.send(source=source_short, payload=payload)
             case SignedRouteRequest(RouteRequest(_, source, request_id, source_eph)):
+                self._logger.debug("Got RouteRequest from %s (%s)",
+                                   PubkeyView(source), request_id)
                 terminal_eph = X25519PrivateKey.generate()
                 session = self.sessions.create_session(
                     destination=source,
@@ -312,15 +371,27 @@ class Terminal:
                     max_hop_count=64,
                 )
                 signed_response = response.sign(signing_key=self.signing_key)
+                self._logger.debug("Respond for RouteRequest from %s (%s) with RouteResponse (%s)",
+                                   PubkeyView(source), request_id, response.destination_route_id)
                 return self._router_rx.send(packet=signed_response)
             case SignedRouteResponse(RouteResponse(_, source, request_id, route_id, destination_eph)):
+                source_view = PubkeyView(source)
+                self._logger.debug("Got RouteResponse from %s (%s) for %s",
+                                   source_view, route_id, request_id)
                 existed_session = self.sessions.get_session(request_id)
                 if existed_session is None:
                     source_short = address_from_full(source)
                     session_request = self.session_requests.get(source_short)
-                    if not session_request or session_request.id != request_id:
-                        # got unexpected response or response for unknown request
+                    if not session_request:
+                        self._logger.info("Drop RouteResponse from %s (%s) for %s - unknown request id",
+                                          source_view, route_id, request_id)
                         return ConstFuture(result=None)
+                    if session_request.id != request_id:
+                        self._logger.info("Drop RouteResponse from %s (%s) for %s - invalid request id",
+                                          source_view, route_id, request_id)
+                        return ConstFuture(result=None)
+                    self._logger.info("Register route to %s (route id %s)",
+                                      PubkeyView(source), route_id)
                     self.session_requests.pop(source_short)
                     self.sessions.create_session(
                         destination=source,
@@ -329,25 +400,38 @@ class Terminal:
                         remote_key=destination_eph,
                         session_id=route_id,
                     )
+                    if session_request.data_queue:
+                        self._logger.info("Send queued data to %s (route id %s)",
+                                          PubkeyView(source), route_id)
                     for data in session_request.data_queue:
                         self._outgoing_packet_callback(destination=source_short, payload=data)
                 return ConstFuture(result=None)
             case RouteError(route_destination, session_id):
                 # TODO: remove route from routes
+                log_pair = (BytesView(route_destination), session_id)
+                self._logger.debug("Got RouteError for %s (%s) from %s",
+                                   *log_pair, PubkeyView(origin))
                 session = self.sessions.get_session(session_id)
                 if session is None:
-                    log.warning("Got RouteError for unexistent route")
+                    self._logger.info("Drop RouteError for %s (%s) - unknown route id",
+                                      *log_pair)
                 elif origin != session.next_hop:
-                    log.warning("Got RouteError from unexpected direction")
+                    self._logger.warning("Drop RouteError for %s (%s) - unexpected origin %s",
+                                         *log_pair, PubkeyView(origin))
                 elif route_destination != session.destination:
-                    log.warning("Got incorrect RouteError")
+                    self._logger.warning("Drop RouteError for %s (%s) - incorrect destination",
+                                         *log_pair)
                 else:
+                    self._logger.info("Remove route to %s (%s) - RouteError received",
+                                      *log_pair)
                     self.sessions.remove_session(session_id)
                 return ConstFuture(result=None)
             case unknown:
                 raise ValueError(unknown)
 
     def _outgoing_packet_callback(self, destination: Address, payload: bytes) -> Future[None]:
+        self._logger.debug("Got data from frontend to %s, %s bytes",
+                           BytesView(destination), len(payload))
         session_id = self.routes.get(destination)
         if session_id:
             session = self.sessions.get_session(session_id)
@@ -360,10 +444,14 @@ class Terminal:
                 chacha_nonce=nonce,
                 payload=encrypted_data,
             )
+            self._logger.debug("Send Data packet to %s, %s bytes",
+                               BytesView(destination), len(encrypted_data))
             return self._router_rx.send(packet=data_packet)
         else:
             session_request = self.session_requests.get(destination)
             if session_request:
+                log.debug("Store data for %s (%s) in queue (total %s items)",
+                          BytesView(destination), session_request.id, len(session_request.data_queue))
                 # TODO: create future for each queue element
                 session_request.data_queue.append(payload)
                 return ConstFuture(result=None)
@@ -378,5 +466,7 @@ class Terminal:
                 source_eph=ephemeral_key.public_key(),
                 max_hop_count=128,
             )
+            self._logger.info("Emit RouteRequest for %s (request id %s)",
+                              BytesView(destination), session_id)
             signed_request = route_request.sign(self.signing_key)
             return self._router_rx.send(packet=signed_request)
