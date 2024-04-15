@@ -16,7 +16,9 @@ class NetworkRX(ABC):
 
 
 class NetworkTX(ABC):
-    pass
+    @abstractmethod
+    def send(self, origin: ExternalAddress, packet: QORPPacket) -> Future[None]:
+        pass
 
 
 class RouterRX(ABC):
