@@ -11,11 +11,15 @@ Address = NewType("Address", bytes)
 
 
 def address_from_full(full_addr: FullAddress) -> Address:
-    full_addr_bytes = full_addr.public_bytes(
+    return address_from_key(full_addr)
+
+
+def address_from_key(pubkey: Ed25519PublicKey) -> Address:
+    pubkey_bytes = pubkey.public_bytes(
         encoding=Encoding.Raw,
         format=PublicFormat.Raw,
     )
     hash = Hash(SHA3_256())
-    hash.update(full_addr_bytes)
+    hash.update(pubkey_bytes)
     key_hash = hash.finalize()
     return Address(key_hash[:16])
