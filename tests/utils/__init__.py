@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import cached_property
 from secrets import randbits, token_bytes
 from threading import Thread, Event
@@ -129,8 +130,9 @@ class NetworkingCallbackRX(NetworkRX):
 
 class EmulatedNetworking(NetworkingProtocol):
     def __init__(self) -> None:
-        self._routers: set[Router] = set()
+        self._emulated_nodes: set[EmulatedNode] = set()
         self._identity_key = Ed25519PrivateKey.generate()
+        self._routers: set[Router] = set()
         self._received: list[tuple[Packet, ExternalAddress]] = []
         self._propagated: list[tuple[Packet, ExternalAddress]] = []
 
@@ -164,7 +166,12 @@ class EmulatedNetworking(NetworkingProtocol):
                  *,
                  packet_generator: PacketGenerator
                  ) -> EmulatedNode:
-        return EmulatedNode(private_key=private_key, networking=self, packet_generator=packet_generator)
+        node = EmulatedNode(private_key=private_key, networking=self, packet_generator=packet_generator)
+        self._emulated_nodes.add(node)
+        return node
+
+    def is_emulated_nodes_attached(self, *nodes: EmulatedNode) -> bool:
+        return self._emulated_nodes.issuperset(nodes)
 
     def on_packet(self, packet: Packet, from_router: Router, destination: ExternalAddress) -> Future[None]:
         self._received.append((packet, destination))
@@ -201,12 +208,14 @@ class EmulatedNode:
 
     def establish_session(self,
                           destination: Address,
+                          *,
                           via_router: Router,
                           ) -> EmulatedSession:
         if not self._networking.is_attached(via_router):
             raise RuntimeError("Trying to attach via unbound router")
         request, _, rreq_source_eph_priv = self._packet_generator.create_rreq(
             destination=destination,
+            source_priv=self._private_signing,
         )
         via_router.network_tx.send(self.origin_address, request).result()
         response = self._find_response_for(request, self._networking.received)
@@ -214,6 +223,33 @@ class EmulatedNode:
             "Got no response for RouteRequest"
         session = emulated_session(request, rreq_source_eph_priv, response, self._packet_generator)
         return session
+
+    def establish_transit_session(self,
+                                  destination: EmulatedNode,
+                                  *,
+                                  via_router: Router
+                                  ) -> EmulatedSession:
+        if not self._networking.is_emulated_nodes_attached(self, destination):
+            raise RuntimeError("Attempt to create session between emulated nodes of different networkings")
+        request, _, rreq_source_eph_priv = self._packet_generator.create_rreq(
+            destination=destination.address,
+            source_priv=self._private_signing,
+        )
+        via_router.network_tx.send(self.origin_address, request).result()
+        destination.respond_to_request(request=request, via_router=via_router)
+        response = self._find_response_for(request, self._networking.received)
+        assert response, \
+            "Got no response for RouteRequest"
+        session = emulated_session(request, rreq_source_eph_priv, response, self._packet_generator)
+        return session
+
+    def respond_to_request(self, request: SignedRouteRequest, via_router: Router) -> None:
+        response, _, _ = self._packet_generator.create_rrep(
+            destination=address_from_full(request.payload.source),
+            source_priv=self._private_signing,
+            source_route_id=request.payload.source_route_id,
+        )
+        via_router.network_tx.send(self._origin_addr, response)
 
     def _find_response_for(self,
                            request: SignedRouteRequest,
@@ -227,11 +263,23 @@ class EmulatedNode:
         return None
 
 
-class EmulatedSession(NamedTuple):
+@dataclass(frozen=True)
+class EmulatedSession:
     to_destination: tuple[Address, RouteID]
     from_source: tuple[Address, RouteID]
     cipher: ChaCha20Poly1305
     packet_generator: PacketGenerator
+    _reverse_session: EmulatedSession | None = None
+
+    @cached_property
+    def reverse(self) -> EmulatedSession:
+        return EmulatedSession(
+            to_destination=self.from_source,
+            from_source=self.to_destination,
+            cipher=self.cipher,
+            packet_generator=self.packet_generator,
+            _reverse_session=self,
+        )
 
     def create_outgoing_packet(self, payload: bytes) -> Data:
         nonce = token_bytes(CHACHA_NONCE_LENGTH)
