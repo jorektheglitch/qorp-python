@@ -321,7 +321,8 @@ class PacketsRecording(NamedTuple):
 
 class TracingTerminal(Terminal):
 
-    def __init__(self, signing_key: Ed25519PrivateKey, router: Router, frontend: Frontend) -> None:
+    def __init__(self, *, signing_key: Ed25519PrivateKey | None = None, router: Router, frontend: Frontend) -> None:
+        signing_key = signing_key or Ed25519PrivateKey.generate()
         super().__init__(signing_key, router, frontend)
         self._rcv_from_router: list[tuple[ExternalAddress, Packet]] = []
         self._rcv_from_frontend: list[tuple[Address, bytes]] = []
