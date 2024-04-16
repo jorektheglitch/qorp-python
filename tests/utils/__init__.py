@@ -73,8 +73,7 @@ class FrontendCallbackRX(FrontendRX):
         self._callback = callback
 
     def send(self, source: Address, payload: bytes) -> Future[None]:
-        destination = address_from_full(self._terminal.address)
-        return self._callback(source, destination, payload)
+        return self._callback(source, self._terminal.address, payload)
 
 
 class StoringFrontend(Frontend):
@@ -88,10 +87,11 @@ class StoringFrontend(Frontend):
         return self._received
 
     def attach(self, terminal: Terminal) -> FrontendRX:
-        address = address_from_full(terminal.address)
-        attached = self._terminals.setdefault(address, terminal)
+        attached = self._terminals.setdefault(terminal.address, terminal)
         if attached is not terminal:
-            raise RuntimeError(f"Diffenert terminal with adress {address.hex(':', bytes_per_sep=2)} already attached.")
+            raise RuntimeError(
+                f"Diffenert terminal with adress {terminal.address.hex(':', bytes_per_sep=2)} already attached."
+            )
         return FrontendCallbackRX(terminal, self.on_data)
 
     def on_data(self, source: Address, destination: Address, payload: bytes) -> Future[None]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Protocol, TypeAlias
 
-from .addresses import Address, ExternalAddress, FullAddress, address_from_full
+from .addresses import Address, ExternalAddress, FullAddress
 from .core import Frontend, NetworkingProtocol, Router, Terminal
 from .crypto import Ed25519PrivateKey
 from .interactors import FrontendRX, NetworkRX
@@ -45,18 +45,17 @@ class DefaultFrontendCallbackRX(FrontendRX):
     def __init__(self, terminal: Terminal, callback: Callable[[Address, Address, bytes], Future[None]]) -> None:
         super().__init__()
         self.terminal = terminal
-        self.terminal_address = address_from_full(terminal.address)
         self.callback = callback
 
     def send(self, source: Address, payload: bytes) -> Future[None]:
-        return self.callback(source, self.terminal_address, payload)
+        return self.callback(source, self.terminal.address, payload)
 
 
 class DefaultFrontend(Frontend):
     _terminals: dict[FullAddress, Terminal]
 
     def attach(self, terminal: Terminal) -> FrontendRX:
-        self._terminals.setdefault(terminal.address, terminal)
+        self._terminals.setdefault(terminal.full_address, terminal)
         rx = DefaultFrontendCallbackRX(terminal, self.on_data)
         return rx
 

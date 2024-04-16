@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from functools import cached_property
 from itertools import count
 from logging import getLogger, Logger
 from secrets import token_bytes
@@ -56,7 +57,7 @@ class RouterCallbackRX(RouterRX):
         self._callback = callabck
 
     def send(self, packet: Packet) -> Future[None]:
-        origin = ExternalAddress(self._origin.address)
+        origin = ExternalAddress(self._origin.full_address)
         return self._callback(origin, packet)
 
 
@@ -94,14 +95,15 @@ class Router:
         return NetworkCallbackTX(self.packet_callback)
 
     def attach(self, terminal: Terminal) -> RouterRX:
-        address = address_from_full(terminal.address)
-        attached = self._terminals.setdefault(address, terminal)
+        attached = self._terminals.setdefault(terminal.address, terminal)
         if attached is not terminal:
-            raise RuntimeError(f"Different terminal with address {address.hex(':', bytes_per_sep=2)} already attached.")
+            raise RuntimeError(
+                f"Different terminal with address {terminal.address.hex(':', bytes_per_sep=2)} already attached."
+            )
         return RouterCallbackRX(terminal=terminal, callabck=self.packet_callback)
 
     def detach(self, terminal: Terminal) -> None:
-        self._terminals.pop(address_from_full(terminal.address), None)
+        self._terminals.pop(terminal.address, None)
 
     def packet_callback(self, origin: ExternalAddress, packet: Packet) -> Future[None]:
         if isinstance(packet, Data):
@@ -127,7 +129,7 @@ class Router:
     def _propagate_packet(self, origin: ExternalAddress, packet: SignedRouteRequest) -> Future[None]:
         if (target_terminal := self._terminals.get(packet.payload.destination)):
             self._logger.debug("Propagate %s packet from %s to terminal %s",
-                               packet.__class__.__name__, PubkeyView(origin), PubkeyView(target_terminal.address))
+                               packet.__class__.__name__, PubkeyView(origin), PubkeyView(target_terminal.full_address))
             return target_terminal.router_tx.send(origin, packet)
         self._logger.debug("Propagate %s packet from %s to Network",
                            packet.__class__.__name__, PubkeyView(origin))
@@ -317,7 +319,6 @@ class Terminal:
                  *,
                  logger: Logger = log,
                  ) -> None:
-        self.address = FullAddress(signing_key.public_key())
         self.routes: dict[Address, RouteID] = {}
         self.sessions = SessionsManager()
         self.session_requests: dict[Address, SessionRequest] = {}
@@ -325,6 +326,14 @@ class Terminal:
         self._logger = logger
         self._frontend_rx = frontend.attach(self)
         self._router_rx = router.attach(self)
+
+    @cached_property
+    def address(self) -> Address:
+        return address_from_full(self.full_address)
+
+    @cached_property
+    def full_address(self) -> FullAddress:
+        return FullAddress(self.signing_key.public_key())
 
     @property
     def frontend_tx(self) -> FrontendTX:
@@ -364,7 +373,7 @@ class Terminal:
                 # TODO: check that there is no already sended responses
                 response = RouteResponse(
                     destination=address_from_full(source),
-                    source=self.address,
+                    source=self.full_address,
                     source_route_id=request_id,
                     destination_route_id=session.id,
                     destination_eph=terminal_eph.public_key(),
@@ -461,7 +470,7 @@ class Terminal:
             self.session_requests[destination] = session_request
             route_request = RouteRequest(
                 destination=destination,
-                source=self.address,
+                source=self.full_address,
                 source_route_id=session_id,
                 source_eph=ephemeral_key.public_key(),
                 max_hop_count=128,
