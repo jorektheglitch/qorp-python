@@ -442,7 +442,7 @@ class ThreadedScheduler(Scheduler):
 
     @property
     def working(self) -> bool:
-        return self._working.is_set()
+        return self._thread is not None and self._thread.is_alive() and self._working.is_set()
 
     def launch(self) -> None:
         if self._thread:
