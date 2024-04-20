@@ -178,7 +178,7 @@ class EmulatedNetworking(NetworkingProtocol):
         return ConstFuture(result=None)
 
     def on_propagate_packet(self, packet: Packet, from_router: Router, exclude: ExternalAddress) -> Future[None]:
-        self._received.append((packet, exclude))
+        self._propagated.append((packet, exclude))
         return ConstFuture(result=None)
 
 
