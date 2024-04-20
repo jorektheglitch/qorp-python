@@ -162,7 +162,8 @@ class Router:
                               *log_triple)
             return ConstFuture(result=None)
         full_request.hop_count += 1
-        if (request.source, request.source_route_id) in self._routes:
+        request_source = address_from_full(request.source)
+        if (request_source, request.source_route_id) in self._routes:
             self._logger.info("Drop RouteRequest from %s (%s) for %s - route already established",
                               *log_triple)
             return ConstFuture(result=None)
@@ -188,6 +189,11 @@ class Router:
                               *log_quad)
             return ConstFuture(result=None)
         full_response.hop_count += 1
+        response_source = address_from_full(response.source)
+        if (response_source, response.destination_route_id) in self._routes:
+            self._logger.info("Drop RouteResponse for %s (%s) from %s (%s) - route already established",
+                              *log_quad)
+            return ConstFuture(result=None)
         # NOTE: (?) maybe check origin in request_info.origins before popping
         request_info = self._pending_requests.pop(response.request_info_triple, None)
         if request_info is None:
@@ -202,7 +208,6 @@ class Router:
                            BytesView(response.destination), response.source_route_id,
                            *map(PubkeyView, route_info))
         self._routes[(response.destination, response.source_route_id)] = route_info
-        response_source = address_from_full(response.source)
         self._logger.debug("Add route to %s (%s): from %s via %s",
                            BytesView(response_source), response.destination_route_id,
                            *map(PubkeyView, reverse_route_info))
