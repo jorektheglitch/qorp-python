@@ -110,6 +110,11 @@ class StoringFrontend(CallbackFrontend):
         return ConstFuture(result=None)
 
 
+class EchoFrontend(CallbackFrontend):
+    def on_data(self, source: Address, destination: Address, payload: bytes) -> Future[None]:
+        return self._terminals[destination].frontend_tx.send(source, payload)
+
+
 class NOOPFrontend(CallbackFrontend):
     def on_data(self, source: Address, destination: Address, payload: bytes) -> Future[None]:
         return ConstFuture(result=None)

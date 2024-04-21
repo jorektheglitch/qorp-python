@@ -1,6 +1,11 @@
 from pytest import fixture
 
-from tests.utils import NOOPFrontend, PacketGenerator, StoringFrontend, EmulatedNetworking, ThreadedScheduler
+from tests.utils import EchoFrontend, NOOPFrontend, PacketGenerator, StoringFrontend, EmulatedNetworking, ThreadedScheduler
+
+
+@fixture
+def echo_frontend() -> EchoFrontend:
+    return EchoFrontend()
 
 
 @fixture
