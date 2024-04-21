@@ -324,7 +324,7 @@ class Terminal:
                  *,
                  logger: Logger = log,
                  ) -> None:
-        self.routes: dict[Address, RouteID] = {}
+        self.routes: dict[Address, tuple[RouteID, RouteID]] = {}
         self.sessions = SessionsManager()
         self.session_requests: dict[Address, SessionRequest] = {}
         self.signing_key: Ed25519PrivateKey = signing_key
@@ -364,6 +364,7 @@ class Terminal:
                                    session_id, len(payload))
                 return self._frontend_rx.send(source=source_short, payload=payload)
             case SignedRouteRequest(RouteRequest(_, source, request_id, source_eph)):
+                source_addr = address_from_full(source)
                 self._logger.debug("Got RouteRequest from %s (%s)",
                                    PubkeyView(source), request_id)
                 terminal_eph = X25519PrivateKey.generate()
@@ -377,7 +378,7 @@ class Terminal:
                 #       source (it might allow replay attacks)
                 # TODO: check that there is no already sended responses
                 response = RouteResponse(
-                    destination=address_from_full(source),
+                    destination=source_addr,
                     source=self.full_address,
                     source_route_id=request_id,
                     destination_route_id=session.id,
@@ -387,6 +388,7 @@ class Terminal:
                 signed_response = response.sign(signing_key=self.signing_key)
                 self._logger.debug("Respond for RouteRequest from %s (%s) with RouteResponse (%s)",
                                    PubkeyView(source), request_id, response.destination_route_id)
+                self.routes[source_addr] = (session.id, request_id)
                 return self._router_rx.send(packet=signed_response)
             case SignedRouteResponse(RouteResponse(_, source, request_id, route_id, destination_eph)):
                 source_view = PubkeyView(source)
@@ -446,15 +448,16 @@ class Terminal:
     def _outgoing_packet_callback(self, destination: Address, payload: bytes) -> Future[None]:
         self._logger.debug("Got data from frontend to %s, %s bytes",
                            BytesView(destination), len(payload))
-        session_id = self.routes.get(destination)
-        if session_id:
+        session_pair = self.routes.get(destination)
+        if session_pair:
+            session_id, route_id = session_pair
             session = self.sessions.get_session(session_id)
             assert session, "Unexpected condition: destination in routes, but session does not exists"
             nonce = token_bytes(CHACHA_NONCE_LENGTH)
             encrypted_data = session.encryption_key.encrypt(nonce, payload, None)
             data_packet = Data(
                 destination=destination,
-                route_id=session_id,
+                route_id=route_id,
                 chacha_nonce=nonce,
                 payload=encrypted_data,
             )
