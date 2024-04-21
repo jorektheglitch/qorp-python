@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -77,15 +78,10 @@ class FrontendCallbackRX(FrontendRX):
         return self._callback(source, self._terminal.address, payload)
 
 
-class StoringFrontend(Frontend):
+class CallbackFrontend(Frontend, ABC):
     def __init__(self) -> None:
         super().__init__()
         self._terminals: dict[Address, Terminal] = {}
-        self._received: list[tuple[Address, Address, bytes]] = []
-
-    @property
-    def received(self) -> Sequence[tuple[Address, Address, bytes]]:
-        return self._received
 
     def attach(self, terminal: Terminal) -> FrontendRX:
         attached = self._terminals.setdefault(terminal.address, terminal)
@@ -95,19 +91,28 @@ class StoringFrontend(Frontend):
             )
         return FrontendCallbackRX(terminal, self.on_data)
 
+    @abstractmethod
+    def on_data(self, source: Address, destination: Address, payload: bytes) -> Future[None]:
+        raise NotImplementedError
+
+
+class StoringFrontend(CallbackFrontend):
+    def __init__(self) -> None:
+        super().__init__()
+        self._received: list[tuple[Address, Address, bytes]] = []
+
+    @property
+    def received(self) -> Sequence[tuple[Address, Address, bytes]]:
+        return SequenceProxy(self._received)
+
     def on_data(self, source: Address, destination: Address, payload: bytes) -> Future[None]:
         self._received.append((source, destination, payload))
         return ConstFuture(result=None)
 
 
-class NOOPFrontendRX(FrontendRX):
-    def send(self, source: Address, payload: bytes) -> Future[None]:
+class NOOPFrontend(CallbackFrontend):
+    def on_data(self, source: Address, destination: Address, payload: bytes) -> Future[None]:
         return ConstFuture(result=None)
-
-
-class NOOPFrontend(Frontend):
-    def attach(self, terminal: Terminal) -> FrontendRX:
-        return NOOPFrontendRX()
 
 
 class NetworkingCallbackRX(NetworkRX):
