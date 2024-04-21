@@ -1,6 +1,7 @@
 from pytest import fixture
 
-from tests.utils import EchoFrontend, NOOPFrontend, PacketGenerator, StoringFrontend, EmulatedNetworking, ThreadedScheduler
+from tests.utils import EchoFrontend, NOOPFrontend, StoringFrontend
+from tests.utils import EmulatedNetworking, PacketGenerator, ThreadedScheduler
 
 
 @fixture
