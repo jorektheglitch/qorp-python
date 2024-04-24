@@ -499,7 +499,7 @@ class ThreadedScheduler(Scheduler):
                 if next_planned.call_at > now:
                     break
                 item = self._scedule.popleft()
-                Thread(target=item.callback, args=item.args, name="Scheduler-callback").start()
+                Thread(target=item.callback, args=item.args, name=f"Scheduled-{item.callback}").start()
             delay = None
             if self._scedule:
                 next_planned = self._scedule[0]
