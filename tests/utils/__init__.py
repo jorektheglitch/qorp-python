@@ -444,6 +444,7 @@ class ThreadedScheduler(Scheduler):
         self._scedule: deque[ScheduleItem] = deque()
         self._has_items = Event()
         self._working = Event()
+        self._running: set[Thread] = set()
         self._thread: Thread | None = None
 
     @property
@@ -499,13 +500,24 @@ class ThreadedScheduler(Scheduler):
                 if next_planned.call_at > now:
                     break
                 item = self._scedule.popleft()
-                Thread(target=item.callback, args=item.args, name=f"Scheduled-{item.callback}").start()
+                self._run_scheduled(item)
             delay = None
             if self._scedule:
                 next_planned = self._scedule[0]
                 now = time.time()
                 if now < next_planned.call_at:
                     delay = next_planned.call_at - now
+
+    def _run_scheduled(self, item: ScheduleItem[*Args]) -> None:
+        def wrap(fn: Callback[*Args], args: tuple[*Args]) -> None:
+            try:
+                fn(*args)
+            finally:
+                self._running.remove(thread)
+
+        thread = Thread(target=wrap, args=(item.callback, item.args), name=f"Scheduled-{item.callback}")
+        self._running.add(thread)
+        thread.start()
 
 
 class SchedulerProxy(Scheduler):
