@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ctypes import _CData
 
-from qorp.addresses import Address, FullAddress, address_from_full
+from qorp.addresses import Address, FullAddress, address_from_full, format_bytes
 from qorp.crypto import Ed25519PrivateKey, Ed25519PublicKey, X25519PublicKey
 from qorp.crypto import Encoding, PublicFormat, CHACHA_NONCE_LENGTH
 from qorp.crypto import InvalidSignature
@@ -100,6 +100,26 @@ class RouteRequest(Structure):
         sign = signing_key.sign(bytes(self))
         return SignedRouteRequest(payload=self, sign=sign, hop_count=0)
 
+    def __str__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"destination={format_bytes(self.destination)}, "
+            f"source={format_bytes(bytes(self.source_raw))}, "
+            f"source_route_id={self.source_route_id}, "
+            f"max_hop_count={self.max_hop_count}"
+            ")"
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"destination={format_bytes(self.destination)}, "
+            f"source={format_bytes(bytes(self.source_raw))}, "
+            f"source_route_id={self.source_route_id}, "
+            f"max_hop_count={self.max_hop_count}"
+            ")"
+        )
+
 
 class SignedRouteRequest(PacketBase):
     _fields_ = [
@@ -181,6 +201,28 @@ class RouteResponse(Structure):
         sign = signing_key.sign(bytes(self))
         return SignedRouteResponse(payload=self, sign=sign, hop_count=0)
 
+    def __str__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"destination={format_bytes(self.destination)}, "
+            f"source={format_bytes(bytes(self.source_raw))}, "
+            f"source_route_id={self.source_route_id}, "
+            f"destination_route_id={self.destination_route_id}, "
+            f"max_hop_count={self.max_hop_count}"
+            ")"
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"destination={format_bytes(self.destination)}, "
+            f"source={format_bytes(bytes(self.source_raw))}, "
+            f"source_route_id={self.source_route_id}, "
+            f"destination_route_id={self.destination_route_id}, "
+            f"max_hop_count={self.max_hop_count}"
+            ")"
+        )
+
 
 class SignedRouteResponse(PacketBase):
     _fields_ = [
@@ -216,6 +258,22 @@ class RouteError(PacketBase):
                  route_id: RouteID
                  ) -> None:
         return super().__init__(route_destination=route_destination, route_id=route_id)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"route_destination={format_bytes(self.route_destination)}, "
+            f"route_id={self.route_id}"
+            ")"
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"route_destination={format_bytes(self.route_destination)}, "
+            f"route_id={self.route_id}"
+            ")"
+        )
 
 
 class RouteOptimization(PacketBase):
@@ -282,6 +340,24 @@ class Data(PacketBase):
             ]
 
         return SpecificLengthData
+
+    def __str__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"destination={format_bytes(self.destination)}, "
+            f"route_id={self.route_id}, "
+            f"payload=b'...'({self.payload_length} bytes)"
+            ")"
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"destination={format_bytes(self.destination)}, "
+            f"route_id={self.route_id}, "
+            f"payload=b'...'({self.payload_length} bytes)"
+            ")"
+        )
 
 
 QORPPacket = Data | SignedRouteRequest | SignedRouteResponse | RouteError

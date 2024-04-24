@@ -63,10 +63,10 @@ class SequenceProxy(Sequence[Item]):
         return self._origin.__reversed__()
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({str(self._origin)})"
+        return f"{self.__class__.__name__}(origin={str(self._origin)})"
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self._origin)})"
+        return f"{self.__class__.__name__}(origin={repr(self._origin)})"
 
 
 class FrontendCallbackRX(FrontendRX):
