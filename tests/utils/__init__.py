@@ -503,6 +503,7 @@ class ThreadedScheduler(Scheduler):
             delay = None
             if self._scedule:
                 next_planned = self._scedule[0]
+                now = time.time()
                 if now < next_planned.call_at:
                     delay = next_planned.call_at - now
 
