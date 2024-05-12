@@ -436,6 +436,7 @@ class Scheduled(ScheduleHandle):
         return super().cancel()
 
     def cancelled(self) -> bool:
+        # FIXME: need to check in scheduler is self item still in plan
         return self._cancelled
 
 
