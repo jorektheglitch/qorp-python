@@ -8,7 +8,7 @@
 
 - [ ] drop if hop_count > max_hop_count
 - [ ] drop if route already established
-- [ ] propagate to Networking
+- [x] propagate to Networking (test_sunny_case_transit_route_establishment)
 - [ ] send to Terminal
 - [ ] do not propagate if request is not first seen
 - [ ] do not send to Terminal if not first seen
@@ -19,7 +19,7 @@
 - [ ] drop if hop_count > max_hop_count
 - [ ] drop if route already established
 - [ ] drop response for unknown request
-- [ ] both route and reverse route added
+- [x] both route and reverse route added (test_sunny_case_transit_route_establishment)
 - [ ] propagate to all directions where request comes from
 
 #### RouteError packet processing
@@ -32,7 +32,7 @@
 #### Data packet processing
 
 - [ ] pass to Terminal
-- [ ] pass to Networking
+- [x] pass to Networking (test_sunny_case_transit_route_establishment)
 - [ ] emit RouteError if no route
 - [ ] drop packet if origin is not prev_hop
 
