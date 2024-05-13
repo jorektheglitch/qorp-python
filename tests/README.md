@@ -6,8 +6,8 @@
 
 #### RouteRequest packet processing
 
-- [ ] drop if hop_count > max_hop_count
-- [ ] drop if route already established
+- [x] drop if hop_count > max_hop_count (test_hop_count_based_drop)
+- [x] drop if route already established (test_rreq_rrep_drop_on_established_route)
 - [x] propagate to Networking (test_sunny_case_transit_route_establishment)
 - [x] send to Terminal (test_sunny_case_route_establishment)
 - [ ] do not propagate if request is not first seen
@@ -16,8 +16,8 @@
 
 #### RouteResponse packet processing
 
-- [ ] drop if hop_count > max_hop_count
-- [ ] drop if route already established
+- [x] drop if hop_count > max_hop_count (test_hop_count_based_drop)
+- [x] drop if route already established (test_rreq_rrep_drop_on_established_route)
 - [ ] drop response for unknown request
 - [x] both route and reverse route added (test_sunny_case_transit_route_establishment, test_sunny_case_route_establishment)
 - [ ] propagate to all directions where request comes from
