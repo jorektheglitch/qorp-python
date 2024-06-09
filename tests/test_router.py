@@ -1,13 +1,16 @@
 import logging
+from secrets import randbits
 
 from qorp.addresses import ExternalAddress, PubkeyView
 from qorp.core import Router
 from qorp.core import log as core_log
 from qorp.crypto import Ed25519PrivateKey
-from qorp.packets import Data, SignedRouteRequest, SignedRouteResponse
+from qorp.packets import Data, RouteError, SignedRouteRequest, SignedRouteResponse
 from qorp.utils.timer import Scheduler
 
+from tests import logger
 from tests.utils import EchoFrontend, PacketGenerator, NOOPFrontend, EmulatedNetworking, TracingTerminal
+from tests.utils import RouteID
 
 
 core_log.setLevel(logging.DEBUG)
@@ -133,3 +136,41 @@ class TestRouter:
                   )
             assert False, \
                 f"Data was not sent back from {PubkeyView(terminal.full_address)}"
+
+    def test_route_error_emit(self,
+                              emulated_networking: EmulatedNetworking,
+                              scheduler: Scheduler,
+                              packet_generator: PacketGenerator,
+                              ) -> None:
+        """
+        Router should send RouteError message if not route exists for incoming Data packet.
+        """
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        other_router = Router(network=emulated_networking, scheduler=scheduler)
+        source_node = emulated_networking.add_node(packet_generator=packet_generator)
+        destination_node = emulated_networking.add_node(packet_generator=packet_generator)
+
+        session = source_node.establish_transit_session(destination=destination_node, via_router=other_router)
+        data = session.create_outgoing_packet(b"\xFF")
+        backward_data = session.reverse.create_outgoing_packet(b"\xFF")
+        router.network_tx.send(source_node.origin_address, data).result()
+        router.network_tx.send(destination_node.origin_address, backward_data).result()
+
+        logger.info("\n".join(("Transieved packets:", *map(str, emulated_networking.received))))
+        rerrs = [
+            (packet, destination)
+            for packet, destination in emulated_networking.received
+            if isinstance(packet, RouteError)
+        ]
+
+        for _, destination in rerrs:
+            if destination == source_node.origin_address:
+                break
+        else:
+            raise AssertionError
+
+        for _, destination in rerrs:
+            if destination == destination_node.origin_address:
+                break
+        else:
+            raise AssertionError
