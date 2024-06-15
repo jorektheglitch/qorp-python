@@ -218,11 +218,15 @@ class Router:
 
     def handle_rerr(self, origin: ExternalAddress, error: RouteError) -> Future[None]:
         route_pair = error.route_destination, error.route_id
-        self._logger.debug("Got RouteError for %s (route id %s)", *route_pair)
+        self._logger.debug("From %s got RouteError for %s (route id %s)",
+                           PubkeyView(origin), BytesView(route_pair[0]), route_pair[1])
         route_info = self._routes.get(route_pair)
         if route_info and route_info.next_hop == origin:
             # TODO: remove reverse route too
             self._routes.pop(route_pair)
+            self._logger.info("Remove route to %s (%s) from %s via %s",
+                              BytesView(error.route_destination), error.route_id,
+                              *map(PubkeyView, route_info))
             return self._network_rx.send(route_info.prev_hop, error)
         return ConstFuture(result=None)
 
