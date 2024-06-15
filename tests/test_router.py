@@ -1,280 +1,203 @@
-import asyncio
-from functools import wraps
-from unittest import TestCase
+import logging
+from secrets import randbits
 
-from typing import Callable, Coroutine, TypeVar
-from typing_extensions import ParamSpec
+from qorp.addresses import ExternalAddress, PubkeyView
+from qorp.core import Router
+from qorp.core import log as core_log
+from qorp.crypto import Ed25519PrivateKey
+from qorp.packets import Data, RouteError, SignedRouteRequest, SignedRouteResponse
+from qorp.utils.timer import Scheduler
 
-from qorp.codecs import CHACHA_NONCE_LENGTH, DEFAULT_CODEC
-from qorp.messages import NetworkData, RouteRequest, RouteError, RouteResponse
-from qorp.nodes import Neighbour
-from qorp.router import Router
-from qorp.encryption import Ed25519PrivateKey
-from qorp.encryption import X25519PrivateKey
-
-from tests.utils import RecorderFrontend, TestConnection, TestProtocol
-from tests.utils import NeignbourMock, RouterMock
+from tests import logger
+from tests.utils import EchoFrontend, PacketGenerator, NOOPFrontend, EmulatedNetworking, TracingTerminal
+from tests.utils import RouteID
 
 
-T = TypeVar("T")
-P = ParamSpec("P")
+core_log.setLevel(logging.DEBUG)
+core_log.addHandler(logging.StreamHandler())
 
 
-def as_sync(async_fn: Callable[P, Coroutine[None, None, T]]) -> Callable[P, T]:
-    @wraps(async_fn)
-    def synced(*args: P.args, **kwargs: P.kwargs) -> T:
-        return asyncio.run(async_fn(*args, **kwargs))
-    return synced
+class TestRouter:
+    def test_hop_count_based_drop(self,
+                                  emulated_networking: EmulatedNetworking,
+                                  noop_frontend: NOOPFrontend,
+                                  scheduler: Scheduler,
+                                  packet_generator: PacketGenerator,
+                                  ) -> None:
+        """
+        Router should drop RouteRequsets and RouteResponses with hop count greater or equal to max hop count.
+        """
 
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        terminal = TracingTerminal(router=router, frontend=noop_frontend)
+        origin = ExternalAddress(Ed25519PrivateKey.generate().public_key())
+        high_hop_count_rreq, _, _ = packet_generator.create_rreq(
+            destination=terminal.address,
+            max_hop_count=1,
+            hop_count=1,
+        )
+        high_hop_count_rrep, _, _ = packet_generator.create_rrep(
+            destination=terminal.address,
+            max_hop_count=1,
+            hop_count=1,
+        )
+        router.network_tx.send(origin=origin, packet=high_hop_count_rreq).result()
+        router.network_tx.send(origin=origin, packet=high_hop_count_rrep).result()
 
-def get_test_router() -> Router:
-    private_key = Ed25519PrivateKey.generate()
-    router = Router(private_key, frontend_factory=RecorderFrontend)
-    return router
+        assert (origin, high_hop_count_rreq) not in terminal.received.from_router, \
+            "Router did not drop RouteRequest with hop_count >= max_hop_count"
+        assert (origin, high_hop_count_rrep) not in terminal.received.from_router, \
+            "Router did not drop RouteResponse with hop_count >= max_hop_count"
 
+    def test_rreq_rrep_drop_on_established_route(
+            self,
+            emulated_networking: EmulatedNetworking,
+            scheduler: Scheduler,
+            packet_generator: PacketGenerator,
+    ) -> None:
+        """
+        Router should drop RouteRequsets and RouteResponses for established route.
+        """
 
-def link_routers(first: Router, second: Router) -> None:
-    first_neighbour = Neighbour(first.public_key)
-    first_proto = TestProtocol()
-    first_neighbour_conn = TestConnection(first_proto, DEFAULT_CODEC, 0.01)
-    first_neighbour.connections.append(first_neighbour_conn)
-    second_neighbour = Neighbour(second.public_key)
-    second_proto = TestProtocol()
-    second_neighbour_conn = TestConnection(second_proto, DEFAULT_CODEC, 0.01)
-    second_neighbour.connections.append(second_neighbour_conn)
-    first_proto.address = second_neighbour_conn
-    second_proto.address = first_neighbour_conn
-    first.forwarder.neighbours.add(second_neighbour)
-    second.forwarder.neighbours.add(first_neighbour)
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        source_node = emulated_networking.add_node(packet_generator=packet_generator)
+        destination_node = emulated_networking.add_node(packet_generator=packet_generator)
 
+        source_node.establish_transit_session(destination=destination_node, via_router=router)
+        request, _ = emulated_networking.propagated[0]
+        response, _ = emulated_networking.received[0]
+        if not (isinstance(request, SignedRouteRequest) and isinstance(response, SignedRouteResponse)):
+            raise RuntimeError
+        router.network_tx.send(ExternalAddress(Ed25519PrivateKey.generate().public_key()), request)
+        router.network_tx.send(ExternalAddress(Ed25519PrivateKey.generate().public_key()), response)
+        request_received_count = 0
+        response_received_count = 0
+        for packet, _ in emulated_networking.propagated:
+            if packet == request:
+                request_received_count += 1
+        for packet, _ in emulated_networking.received:
+            if packet == response:
+                response_received_count += 1
 
-class TestMessagesForwarder(TestCase):
+        assert request_received_count == 1, \
+            "RouteRequest was not dropped"
+        assert response_received_count == 1, \
+            "RouteResponse was not dropped"
 
-    def setUp(self) -> None:
-        private_key = Ed25519PrivateKey.generate()
-        self.router = RouterMock(private_key, frontend_factory=RecorderFrontend)
-        self.forwarder = self.router.forwarder
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
+    def test_sunny_case_transit_route_establishment(
+            self,
+            packet_generator: PacketGenerator,
+            emulated_networking: EmulatedNetworking,
+            scheduler: Scheduler,
+    ) -> None:
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        source_node = emulated_networking.add_node(packet_generator=packet_generator)
+        destination_node = emulated_networking.add_node(packet_generator=packet_generator)
 
-    def tearDown(self) -> None:
-        self.loop.stop()
-        self.loop.close()
+        session = source_node.establish_transit_session(destination=destination_node, via_router=router)
 
-    def test_networkdata_forwarding(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        self.forwarder.routes[(source, destination)] = (source, destination)
-        self.forwarder.routes[(source, self.router)] = (source, self.router)
-        nonce = b"\x00"*CHACHA_NONCE_LENGTH
-        destinations = destination, self.router
-        signed = [
-            NetworkData(source, dst, nonce, 1, b"\x00")
-            for dst in destinations
+        data = session.create_outgoing_packet(b"\xFF")
+        backward_data = session.reverse.create_outgoing_packet(b"\xFF")
+        router.network_tx.send(source_node.origin_address, data).result()
+        router.network_tx.send(destination_node.origin_address, backward_data).result()
+
+        assert (data, destination_node.origin_address) in emulated_networking.received, \
+            "Data was not sent via forward route"
+        assert (backward_data, source_node.origin_address) in emulated_networking.received, \
+            "Data was not sent via backward route"
+
+    def test_sunny_case_route_establishment(
+            self,
+            emulated_networking: EmulatedNetworking,
+            echo_frontend: EchoFrontend,
+            scheduler: Scheduler,
+            packet_generator: PacketGenerator,
+    ) -> None:
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        terminal = TracingTerminal(router=router, frontend=echo_frontend)
+        remote_node = emulated_networking.add_node(packet_generator=packet_generator)
+
+        session = remote_node.establish_session(
+            destination=terminal.address, via_router=router,
+        )
+        data = session.create_outgoing_packet(b"\xFF")
+        router.network_tx.send(remote_node.origin_address, data).result()
+
+        assert (remote_node.origin_address, data) in terminal.received.from_router, \
+            "Data was not received by Terminal"
+
+        for packet, destination in emulated_networking.received:
+            if isinstance(packet, Data) and destination == remote_node.origin_address:
+                break
+        else:
+            print("Networking receive packets:\n  ",
+                  "\n  ".join(f"From {PubkeyView(origin)} packet {packet}"
+                              for packet, origin in emulated_networking.received),
+                  )
+            assert False, \
+                f"Data was not sent back from {PubkeyView(terminal.full_address)}"
+
+    def test_route_error_emit(self,
+                              emulated_networking: EmulatedNetworking,
+                              scheduler: Scheduler,
+                              packet_generator: PacketGenerator,
+                              ) -> None:
+        """
+        Router should send RouteError message if not route exists for incoming Data packet.
+        """
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        other_router = Router(network=emulated_networking, scheduler=scheduler)
+        source_node = emulated_networking.add_node(packet_generator=packet_generator)
+        destination_node = emulated_networking.add_node(packet_generator=packet_generator)
+
+        session = source_node.establish_transit_session(destination=destination_node, via_router=other_router)
+        data = session.create_outgoing_packet(b"\xFF")
+        backward_data = session.reverse.create_outgoing_packet(b"\xFF")
+        router.network_tx.send(source_node.origin_address, data).result()
+        router.network_tx.send(destination_node.origin_address, backward_data).result()
+
+        logger.info("\n".join(("Transieved packets:", *map(str, emulated_networking.received))))
+        rerrs = [
+            (packet, destination)
+            for packet, destination in emulated_networking.received
+            if isinstance(packet, RouteError)
         ]
-        unsigned = [
-            NetworkData(source, dst, nonce, 1, b"\x01")
-            for dst in destinations
-        ]
-        for msg in signed:
-            msg.sign(source.private_key)
-            self.forwarder.message_callback(source, msg)
-            self.assertIn(
-                msg, msg.destination.received,
-                "Message did not forwarded to next hop"
-            )
-        for msg in unsigned:
-            self.forwarder.message_callback(source, msg)
-            self.assertNotIn(
-                msg, msg.destination.received,
-                "Unsingned message forwarded to next hop"
-            )
 
-    def test_routeerror_emit(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        nonce = b"\x00"*CHACHA_NONCE_LENGTH
-        destinations = destination, self.router
-        for dst in destinations:
-            msg = NetworkData(source, dst, nonce, 1, b"\x00")
-            msg.sign(source.private_key)
-            self.forwarder.message_callback(source, msg)
-            rerr = RouteError(self.router, source, source, dst)
-            rerr.sign(self.router.private_key)
-            self.assertIn(
-                rerr, source.received,
-                "Forwarder does not reply with RouteError to message with "
-                "unknown source-destination pair."
-            )
+        for _, destination in rerrs:
+            if destination == source_node.origin_address:
+                break
+        else:
+            raise AssertionError
 
-    @as_sync
-    async def test_routerequest_propagation(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        neighbours = [NeignbourMock() for _ in range(5)]
-        self.forwarder.neighbours.update(neighbours)
-        rreq_direction, *neighbours = neighbours
-        privkey = X25519PrivateKey.generate()
-        rreq_pubkey = privkey.public_key()
-        # TODO: Add special case - RReq to end of known route
-        rreq = RouteRequest(source, destination, rreq_pubkey)
-        rreq.sign(source.private_key)
-        self.forwarder.message_callback(rreq_direction, rreq)
-        for neighbour in neighbours:
-            self.assertIn(
-                rreq, neighbour.received,
-                "Forwarder does not relay RouteRequest to neighbour"
-            )
-        self.assertNotIn(
-            rreq, rreq_direction.received,
-            "Forwarder sends RouteRequest back to source"
-        )
+        for _, destination in rerrs:
+            if destination == destination_node.origin_address:
+                break
+        else:
+            raise AssertionError
 
-    @as_sync
-    async def test_routerequest_deduplication(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        neighbours = [NeignbourMock() for _ in range(5)]
-        self.forwarder.neighbours.update(neighbours)
-        rreq_direction, rreq_other_direction, *neighbours = neighbours
-        privkey = X25519PrivateKey.generate()
-        rreq_pubkey = privkey.public_key()
-        rreq = RouteRequest(source, destination, rreq_pubkey)
-        rreq.sign(source.private_key)
-        self.forwarder.message_callback(rreq_direction, rreq)
-        self.forwarder.message_callback(rreq_other_direction, rreq)
-        for neighbour in neighbours:
-            self.assertEqual(
-                neighbour.received.count(rreq), 1,
-                "Forwarder duplicates RouteRequest"
-            )
-        # TODO: Decide is this normal that rreq_other_directions handles RReq
-        #       coming from rreq_direction
+    def test_route_error_process(
+            self,
+            packet_generator: PacketGenerator,
+            emulated_networking: EmulatedNetworking,
+            scheduler: Scheduler,
+    ) -> None:
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        source_node = emulated_networking.add_node(packet_generator=packet_generator)
+        destination_node = emulated_networking.add_node(packet_generator=packet_generator)
 
-    @as_sync
-    async def test_routerequest_responding(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        neighbours = [NeignbourMock() for _ in range(2)]
-        self.forwarder.neighbours.update(neighbours)
-        rreq_direction, rrep_direction = neighbours
-        rreq_privkey = X25519PrivateKey.generate()
-        rreq_pubkey = rreq_privkey.public_key()
-        rrep_privkey = X25519PrivateKey.generate()
-        rrep_pubkey = rrep_privkey.public_key()
-        # TODO: Add special case - RReq to end of known route
-        rreq = RouteRequest(source, destination, rreq_pubkey)
-        rreq.sign(source.private_key)
-        self.forwarder.message_callback(rreq_direction, rreq)
-        rrep = RouteResponse(destination, source, rreq_pubkey, rrep_pubkey)
-        rrep.sign(destination.private_key)
-        self.forwarder.message_callback(rrep_direction, rrep)
-        await asyncio.sleep(0.5)
-        self.assertIn(
-            rrep, rreq_direction.received,
-            "Forwarder does not relay RouteResponse to requester"
-        )
+        session = source_node.establish_transit_session(destination=destination_node, via_router=router)
+        # TODO: (?) add some data before rerr
 
-    @as_sync
-    async def test_routeresponse_propagation(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        neighbours = [NeignbourMock() for _ in range(5)]
-        self.forwarder.neighbours.update(neighbours)
-        rreq_direction, *neighbours = neighbours
-        rrep_direction, *rrep_receivers = neighbours
-        rreq_privkey = X25519PrivateKey.generate()
-        rreq_pubkey = rreq_privkey.public_key()
-        rrep_privkey = X25519PrivateKey.generate()
-        rrep_pubkey = rrep_privkey.public_key()
-        # TODO: Add special case - RReq to end of known route
-        rreq = RouteRequest(source, destination, rreq_pubkey)
-        rreq.sign(source.private_key)
-        self.forwarder.message_callback(rreq_direction, rreq)
-        rrep = RouteResponse(destination, source, rreq_pubkey, rrep_pubkey)
-        rrep.sign(destination.private_key)
-        self.forwarder.message_callback(rrep_direction, rrep)
-        await asyncio.sleep(0.5)
-        for receiver in rrep_receivers:
-            self.assertIn(
-                rrep, receiver.received,
-                "Forwarder does not relay RouteResponse to requester"
-            )
-        self.assertNotIn(
-            rrep, rrep_direction.received,
-            "RouteResponse forwarded back to sender"
-        )
+        rerr = packet_generator.create_rerr(*session.from_source)
+        router.network_tx.send(source_node.origin_address, rerr)
 
-    def test_routeerror_fetch(self) -> None:
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        src_direction = NeignbourMock()
-        dst_direction = NeignbourMock()
-        rnd_source = NeignbourMock()
-        rnd_destination = NeignbourMock()
-        forward_directions = (src_direction, dst_direction)
-        backward_directions = (dst_direction, src_direction)
-        self.forwarder.routes[(source, destination)] = forward_directions
-        self.forwarder.routes[(destination, source)] = backward_directions
-        ignored = [
-            RouteError(rnd_source, rnd_destination, rnd_source, destination),
-            RouteError(rnd_source, destination, source, destination)
-            # TODO: add all cases of ignored RouteError messages
-        ]
-        for msg in ignored:
-            msg.sign(rnd_source.private_key)
-            self.forwarder.message_callback(rnd_source, msg)
-        routes = (source, destination), (destination, source)
-        for route in routes:
-            self.assertIn(
-                route, self.forwarder.routes,
-                "Forwarder removes route after handles RouteError from node "
-                "which is not a route participant."
-            )
-        rerr = RouteError(dst_direction, src_direction, source, destination)
-        rerr.sign(dst_direction.private_key)
-        self.forwarder.message_callback(dst_direction, rerr)
-        for route in routes:
-            self.assertNotIn(
-                route, self.forwarder.routes,
-                "Forwarder does not remove route after handles RouteError "
-                "from a route participant."
-            )
+        data = session.create_outgoing_packet(b"\xFF")
+        backward_data = session.reverse.create_outgoing_packet(b"\xFF")
+        router.network_tx.send(source_node.origin_address, data).result()
+        router.network_tx.send(destination_node.origin_address, backward_data).result()
 
-    def test_routeerror_propagation(self) -> None:
-        pass
-
-    @as_sync
-    async def test_rreq_ttl_kill(self) -> None:
-        TEST_TIMEOUT = 0.1
-        self.forwarder.RREQ_TIMEOUT = TEST_TIMEOUT
-        source = NeignbourMock()
-        destination = NeignbourMock()
-        neighbours = [NeignbourMock() for _ in range(5)]
-        self.forwarder.neighbours.update(neighbours)
-        rreq_direction, *neighbours = neighbours
-        privkey = X25519PrivateKey.generate()
-        rreq_pubkey = privkey.public_key()
-        # TODO: Add special case - RReq to end of known route
-        rreq = RouteRequest(source, destination, rreq_pubkey)
-        rreq.sign(source.private_key)
-        self.forwarder.message_callback(rreq_direction, rreq)
-        await asyncio.sleep(TEST_TIMEOUT*10)
-        self.assertNotIn(
-            destination, self.forwarder.pending_requests,
-            "Forwader does not delete RouteRequest"
-        )
-
-
-class TestRouter(TestCase):
-
-    def setUp(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-
-    def tearDown(self) -> None:
-        self.loop.stop()
-        self.loop.close()
-
-    def test_init_network(self) -> None:
-        pass
+        # TODO: check router table instead
+        assert (data, destination_node.origin_address) in emulated_networking.received, \
+            "Data was sent via forward route (route was not deleted)"
+        assert (backward_data, source_node.origin_address) in emulated_networking.received, \
+            "Data was sent via backward route (route was not deleted)"
