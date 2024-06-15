@@ -283,7 +283,7 @@ class EmulatedSession:
 
     @cached_property
     def reverse(self) -> EmulatedSession:
-        return EmulatedSession(
+        return self._reverse_session or EmulatedSession(
             to_destination=self.from_source,
             from_source=self.to_destination,
             cipher=self.cipher,
