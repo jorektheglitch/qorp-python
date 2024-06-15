@@ -174,3 +174,30 @@ class TestRouter:
                 break
         else:
             raise AssertionError
+
+    def test_route_error_process(
+            self,
+            packet_generator: PacketGenerator,
+            emulated_networking: EmulatedNetworking,
+            scheduler: Scheduler,
+    ) -> None:
+        router = Router(network=emulated_networking, scheduler=scheduler)
+        source_node = emulated_networking.add_node(packet_generator=packet_generator)
+        destination_node = emulated_networking.add_node(packet_generator=packet_generator)
+
+        session = source_node.establish_transit_session(destination=destination_node, via_router=router)
+        # TODO: (?) add some data before rerr
+
+        rerr = packet_generator.create_rerr(*session.from_source)
+        router.network_tx.send(source_node.origin_address, rerr)
+
+        data = session.create_outgoing_packet(b"\xFF")
+        backward_data = session.reverse.create_outgoing_packet(b"\xFF")
+        router.network_tx.send(source_node.origin_address, data).result()
+        router.network_tx.send(destination_node.origin_address, backward_data).result()
+
+        # TODO: check router table instead
+        assert (data, destination_node.origin_address) in emulated_networking.received, \
+            "Data was sent via forward route (route was not deleted)"
+        assert (backward_data, source_node.origin_address) in emulated_networking.received, \
+            "Data was sent via backward route (route was not deleted)"
