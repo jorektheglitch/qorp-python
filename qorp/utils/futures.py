@@ -1,7 +1,7 @@
 from concurrent.futures import Future
 from typing import Any, Callable, TypeVar
 
-from .timer import Scheduler, ScheduleHandle
+from .scheduling import Scheduler, ScheduleHandle
 
 
 T = TypeVar("T")

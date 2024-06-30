@@ -9,7 +9,7 @@ from .crypto import Ed25519PrivateKey
 from .interactors import FrontendRX, NetworkRX
 from .packets import QORPPacket
 from .utils.futures import Future, ConstFuture
-from .utils.timer import Scheduler
+from .utils.scheduling import Scheduler
 
 
 log = logging.getLogger(__name__)

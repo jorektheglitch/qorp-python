@@ -6,7 +6,7 @@ from qorp.core import Router
 from qorp.core import log as core_log
 from qorp.crypto import Ed25519PrivateKey
 from qorp.packets import Data, RouteError, SignedRouteRequest, SignedRouteResponse
-from qorp.utils.timer import Scheduler
+from qorp.utils.scheduling import Scheduler
 
 from tests import logger
 from tests.utils import EchoFrontend, PacketGenerator, NOOPFrontend, EmulatedNetworking, TracingTerminal

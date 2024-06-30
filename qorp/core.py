@@ -13,7 +13,7 @@ from .interactors import FrontendRX, FrontendTX, NetworkRX, NetworkTX, RouterRX,
 from .packets import Data, RouteError, RouteRequest, RouteResponse, SignedRouteRequest, SignedRouteResponse, QORPPacket
 from .packets import RequestInfoTriple
 from .utils.futures import Future, ConstFuture, set_ttl
-from .utils.timer import Scheduler
+from .utils.scheduling import Scheduler
 from ._types import RouteID
 
 

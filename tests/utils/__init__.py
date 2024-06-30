@@ -17,7 +17,7 @@ from qorp.crypto import CHACHA_NONCE_LENGTH, ChaCha20Poly1305, Ed25519PrivateKey
 from qorp.interactors import FrontendRX, NetworkRX
 from qorp.packets import Data, RouteError, RouteRequest, RouteResponse, SignedRouteRequest, SignedRouteResponse
 from qorp.utils.futures import Future, ConstFuture
-from qorp.utils.timer import Callback, Scheduler, ScheduleHandle, Args
+from qorp.utils.scheduling import Callback, Scheduler, ScheduleHandle, Args
 
 
 Item = TypeVar("Item", covariant=True)
