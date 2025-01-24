@@ -40,9 +40,15 @@ class Frontend(ABC):
         pass
 
 
+class RouteKey(NamedTuple):
+    address: Address
+    route_id: RouteID
+
+
 class RouteInfo(NamedTuple):
     prev_hop: ExternalAddress
     next_hop: ExternalAddress
+    reverse_route: RouteKey
 
 
 class RequestInfo(NamedTuple):
@@ -73,7 +79,7 @@ class NetworkCallbackTX(NetworkTX):
 class Router:
     _network_rx: NetworkRX
     _scheduler: Scheduler
-    _routes: dict[tuple[Address, RouteID], RouteInfo]
+    _routes: dict[RouteKey, RouteInfo]
     _pending_requests: dict[RequestInfoTriple, RequestInfo]
     _route_request_timeout: float = 10
 
@@ -136,7 +142,7 @@ class Router:
         return self._network_rx.propagate(packet, exclude=origin)
 
     def handle_data(self, origin: ExternalAddress, data: Data) -> Future[None]:
-        route_pair = data.destination, data.route_id
+        route_pair = RouteKey(address=data.destination, route_id=data.route_id)
         log_pair = BytesView(data.destination), data.route_id
         self._logger.debug("From %s got Data for %s (route id %s)",
                            PubkeyView(origin), *log_pair)
@@ -145,7 +151,7 @@ class Router:
             self._logger.debug("Send RouteError for %s (route id %s)", *log_pair)
             rerr = RouteError(*route_pair)
             return self._network_rx.send(origin, rerr)
-        prev_hop, next_hop = route
+        prev_hop, next_hop, _ = route
         if prev_hop != origin:
             self._logger.debug("Drop Data for %s (route id %s) - unexpected origin %s",
                                *log_pair, PubkeyView(origin))
@@ -163,7 +169,7 @@ class Router:
             return ConstFuture(result=None)
         full_request.hop_count += 1
         request_source = address_from_full(request.source)
-        if (request_source, request.source_route_id) in self._routes:
+        if RouteKey(address=request_source, route_id=request.source_route_id) in self._routes:
             self._logger.info("Drop RouteRequest from %s (%s) for %s - route already established",
                               *log_triple)
             return ConstFuture(result=None)
@@ -190,7 +196,7 @@ class Router:
             return ConstFuture(result=None)
         full_response.hop_count += 1
         response_source = address_from_full(response.source)
-        if (response_source, response.destination_route_id) in self._routes:
+        if RouteKey(address=response_source, route_id=response.destination_route_id) in self._routes:
             self._logger.info("Drop RouteResponse for %s (%s) from %s (%s) - route already established",
                               *log_quad)
             return ConstFuture(result=None)
@@ -202,31 +208,43 @@ class Router:
             return ConstFuture(result=None)
         # FIXME: make three-way route setup procedure
         next_hop = request_info.origins[0]
-        route_info = RouteInfo(prev_hop=origin, next_hop=next_hop)
-        reverse_route_info = RouteInfo(prev_hop=next_hop, next_hop=origin)
+        route_info = RouteInfo(
+            prev_hop=origin,
+            next_hop=next_hop,
+            reverse_route=RouteKey(address=response_source, route_id=response.destination_route_id)
+        )
+        reverse_route_info = RouteInfo(
+            prev_hop=next_hop,
+            next_hop=origin,
+            reverse_route=RouteKey(address=response.destination, route_id=response.source_route_id)
+        )
         self._logger.debug("Add route to %s (%s): from %s via %s",
                            BytesView(response.destination), response.source_route_id,
-                           *map(PubkeyView, route_info))
-        self._routes[(response.destination, response.source_route_id)] = route_info
+                           PubkeyView(route_info.prev_hop), PubkeyView(route_info.next_hop))
+        self._routes[RouteKey(address=response.destination, route_id=response.source_route_id)] = route_info
         self._logger.debug("Add route to %s (%s): from %s via %s",
                            BytesView(response_source), response.destination_route_id,
-                           *map(PubkeyView, reverse_route_info))
-        self._routes[(response_source, response.destination_route_id)] = reverse_route_info
+                           PubkeyView(reverse_route_info.prev_hop), PubkeyView(reverse_route_info.next_hop))
+        self._routes[RouteKey(address=response_source, route_id=response.destination_route_id)] = reverse_route_info
         for request_origin in request_info.origins:
             self._forward_packet(origin=origin, destination=request_origin, packet=full_response)
         return ConstFuture(result=None)
 
     def handle_rerr(self, origin: ExternalAddress, error: RouteError) -> Future[None]:
-        route_pair = error.route_destination, error.route_id
+        route_pair = RouteKey(error.route_destination, error.route_id)
         self._logger.debug("From %s got RouteError for %s (route id %s)",
-                           PubkeyView(origin), BytesView(route_pair[0]), route_pair[1])
+                           PubkeyView(origin), BytesView(route_pair.address), route_pair.route_id)
         route_info = self._routes.get(route_pair)
         if route_info and route_info.next_hop == origin:
-            # TODO: remove reverse route too
-            self._routes.pop(route_pair)
             self._logger.info("Remove route to %s (%s) from %s via %s",
                               BytesView(error.route_destination), error.route_id,
-                              *map(PubkeyView, route_info))
+                              PubkeyView(route_info.prev_hop), PubkeyView(route_info.next_hop))
+            self._routes.pop(route_pair)
+            self._logger.info("Remove reverse route for %s (%s) - to %s (%s) from %s via %s",
+                              BytesView(error.route_destination), error.route_id,
+                              BytesView(route_info.reverse_route[0]), route_info.reverse_route[1],
+                              PubkeyView(route_info.prev_hop), PubkeyView(route_info.next_hop))
+            self._routes.pop(route_info.reverse_route, None)
             return self._network_rx.send(route_info.prev_hop, error)
         return ConstFuture(result=None)
 
