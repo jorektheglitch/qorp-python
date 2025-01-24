@@ -197,7 +197,7 @@ class TestRouter:
         router.network_tx.send(destination_node.origin_address, backward_data).result()
 
         # TODO: check router table instead
-        assert (data, destination_node.origin_address) in emulated_networking.received, \
+        assert (data, destination_node.origin_address) not in emulated_networking.received, \
             "Data was sent via forward route (route was not deleted)"
-        assert (backward_data, source_node.origin_address) in emulated_networking.received, \
+        assert (backward_data, source_node.origin_address) not in emulated_networking.received, \
             "Data was sent via backward route (route was not deleted)"
