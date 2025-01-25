@@ -9,7 +9,7 @@ from threading import Thread, Event
 import time
 import bisect
 from collections import deque
-from typing import Any, Callable, Generator, Generic, Iterator, NamedTuple, Sequence, TypeVar, overload
+from typing import Any, Callable, Generator, Generic, Iterator, NamedTuple, Protocol, Sequence, TypeVar, overload
 
 from qorp.addresses import Address, ExternalAddress, FullAddress, address_from_full
 from qorp.core import Frontend, NetworkingProtocol, Packet, Router, Terminal, RouteID
@@ -408,11 +408,25 @@ class PacketGenerator:
         return RouteError(route_destination, route_id)
 
 
-Time = float
+class AbstractTime(Protocol):
+    @abstractmethod
+    def __lt__(self: AnyTime, other: AnyTime) -> bool:
+        pass
+
+    @abstractmethod
+    def __sub__(self: AnyTime, other: AnyTime) -> AnyTime:
+        raise NotImplementedError
+
+    @abstractmethod
+    def __float__(self) -> float:
+        raise NotImplementedError
 
 
-class ScheduleItem(NamedTuple, Generic[*Args]):
-    call_at: Time
+AnyTime = TypeVar("AnyTime", bound=AbstractTime)
+
+
+class ScheduleItem(NamedTuple, Generic[AnyTime, *Args]):
+    call_at: AnyTime
     callback: Callback[*Args]
     args: tuple[*Args]
 
@@ -433,23 +447,31 @@ class Scheduled(ScheduleHandle):
             return
         self._cancelled = True
         self._timer.cancel(self)
-        return super().cancel()
 
     def cancelled(self) -> bool:
         # FIXME: need to check in scheduler is self item still in plan
         return self._cancelled
 
 
-class ThreadedScheduler(Scheduler):
-    def __init__(self) -> None:
-        self._scedule: deque[ScheduleItem] = deque()
+class ThreadedScheduler(Scheduler, Generic[AnyTime]):
+    @overload
+    def __init__(self: ThreadedScheduler[float]) -> None: ...
+    @overload
+    def __init__(self: ThreadedScheduler[AnyTime], time_fn: Callable[[], AnyTime]) -> None: ...
+
+    def __init__(
+        self: ThreadedScheduler[AnyTime],
+        time_fn: Callable[[], AnyTime] = time.time,  # type: ignore
+    ) -> None:
+        self._time_fn = time_fn
+        self._scedule: deque[ScheduleItem[AnyTime, *tuple[Any, ...]]] = deque()
         self._has_items = Event()
         self._working = Event()
         self._running: set[Thread] = set()
         self._thread: Thread | None = None
 
     @property
-    def schedule(self) -> Sequence[ScheduleItem]:
+    def schedule(self) -> Sequence[ScheduleItem[AnyTime, *tuple[Any, ...]]]:
         return SequenceProxy(self._scedule)
 
     @property
@@ -497,7 +519,7 @@ class ThreadedScheduler(Scheduler):
             self._has_items.clear()
             while self._scedule:
                 next_planned = self._scedule[0]
-                now = time.time()
+                now = self._time_fn()
                 if next_planned.call_at > now:
                     break
                 item = self._scedule.popleft()
@@ -505,11 +527,11 @@ class ThreadedScheduler(Scheduler):
             delay = None
             if self._scedule:
                 next_planned = self._scedule[0]
-                now = time.time()
+                now = self._time_fn()
                 if now < next_planned.call_at:
-                    delay = next_planned.call_at - now
+                    delay = float(next_planned.call_at - now)
 
-    def _run_scheduled(self, item: ScheduleItem[*Args]) -> None:
+    def _run_scheduled(self, item: ScheduleItem[AnyTime, *Args]) -> None:
         def wrap(fn: Callback[*Args], args: tuple[*Args]) -> None:
             try:
                 fn(*args)
